@@ -586,14 +586,22 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}) -> (stmt: ^ast.
 		}
 
 		token_expect(parser, .Open_Brace) or_return
-		body := parse_stmt_list(parser) or_return
+		then_block := parse_stmt_list(parser) or_return
 		token_advance(parser)
+		else_block: []^ast.Stmt
+		if token_peek(parser).kind == .Else {
+			token_advance(parser)
+			token_expect(parser, .Open_Brace) or_return
+			else_block = parse_stmt_list(parser) or_return
+			token_expect(parser, .Close_Brace)
+		}
 
 		if_stmt := ast.new(ast.Stmt_If, token.location, parser.end_location)
-		if_stmt.label = label
-		if_stmt.init  = init
-		if_stmt.cond  = cond
-		if_stmt.body  = body
+		if_stmt.label      = label
+		if_stmt.init       = init
+		if_stmt.cond       = cond
+		if_stmt.then_block = then_block
+		if_stmt.else_block = else_block
 		return if_stmt, true
 	case .Switch:
 		token_advance(parser)
@@ -696,7 +704,11 @@ print_stmt :: proc(b: ^strings.Builder, stmt: ^ast.Stmt, indent := 0) {
 			print_stmt(b, s, indent + 1)
 		}
 	case ^ast.Stmt_If:
-		for s in v.body {
+		for s in v.then_block {
+			print_stmt(b, s, indent + 1)
+		}
+		fmt.println("ELSE")
+		for s in v.else_block {
 			print_stmt(b, s, indent + 1)
 		}
 	case ^ast.Stmt_Switch:

@@ -327,18 +327,62 @@ cg_expr :: proc(ctx: ^CG_Context, builder: ^spv.Builder, expr: ^ast.Expr, deref 
 		type := cg_type(ctx, v.type).type
 
 		if op_is_relation(v.op) {
-			t := types.default_type(types.op_result_type(v.lhs.type, v.rhs.type))
+			t := types.op_result_type(v.lhs.type, v.rhs.type)
 			#partial switch t.kind {
 			case .Int:
-				return spv.OpIEqual(builder, type, lhs, rhs)
+				#partial switch v.op {
+				case .Equal:
+					return spv.OpIEqual(builder, type, lhs, rhs)
+				case .Not_Equal:
+					return spv.OpINotEqual(builder, type, lhs, rhs)
+				case .Less:
+					return spv.OpSLessThan(builder, type, lhs, rhs)
+				case .Less_Equal:
+					return spv.OpSLessThanEqual(builder, type, lhs, rhs)
+				case .Greater:
+					return spv.OpSGreaterThan(builder, type, lhs, rhs)
+				case .Greater_Equal:
+					return spv.OpSGreaterThanEqual(builder, type, lhs, rhs)
+				}
 			case .Uint:
-				return spv.OpIEqual(builder, type, lhs, rhs)
+				#partial switch v.op {
+				case .Equal:
+					return spv.OpIEqual(builder, type, lhs, rhs)
+				case .Not_Equal:
+					return spv.OpINotEqual(builder, type, lhs, rhs)
+				case .Less:
+					return spv.OpULessThan(builder, type, lhs, rhs)
+				case .Less_Equal:
+					return spv.OpULessThanEqual(builder, type, lhs, rhs)
+				case .Greater:
+					return spv.OpUGreaterThan(builder, type, lhs, rhs)
+				case .Greater_Equal:
+					return spv.OpUGreaterThanEqual(builder, type, lhs, rhs)
+				}
 			case .Float:
-				return spv.OpFOrdEqual(builder, type, lhs, rhs)
-			case:
-				unimplemented()
+				#partial switch v.op {
+				case .Equal:
+					return spv.OpFOrdEqual(builder, type, lhs, rhs)
+				case .Not_Equal:
+					return spv.OpFOrdNotEqual(builder, type, lhs, rhs)
+				case .Less:
+					return spv.OpFOrdLessThan(builder, type, lhs, rhs)
+				case .Less_Equal:
+					return spv.OpFOrdLessThanEqual(builder, type, lhs, rhs)
+				case .Greater:
+					return spv.OpFOrdGreaterThan(builder, type, lhs, rhs)
+				case .Greater_Equal:
+					return spv.OpFOrdGreaterThanEqual(builder, type, lhs, rhs)
+				}
+			case .Bool:
+				#partial switch v.op {
+				case .Equal:
+					return spv.OpLogicalEqual(builder, type, lhs, rhs)
+				case .Not_Equal:
+					return spv.OpLogicalNotEqual(builder, type, lhs, rhs)
+				}
 			}
-			return 0
+			panic("")
 		}
 
 		#partial switch v.type.kind {
@@ -383,16 +427,38 @@ cg_expr :: proc(ctx: ^CG_Context, builder: ^spv.Builder, expr: ^ast.Expr, deref 
 			}
 		case .Bool:
 			#partial switch v.op {
-			case .Equal:
-				return spv.OpLogicalEqual(builder, type, lhs, rhs)
+			case .And:
+				return spv.OpLogicalAnd(builder, type, lhs, rhs)
+			case .Or:
+				return spv.OpLogicalAnd(builder, type, lhs, rhs)
 			}
 			unimplemented()
 		case .Matrix:
 			unimplemented()
 		case .Vector:
-			unimplemented()
+			if v.lhs.type.kind == .Vector && v.lhs.type.kind == .Vector {
+				panic("")
+			}
+
+			if v.rhs.type.kind == .Vector {
+				lhs, rhs = rhs, lhs
+			}
+
+			#partial switch v.op {
+			case .Add:
+				return spv.OpFAdd(builder, type, lhs, rhs)
+			case .Subtract:
+				return spv.OpFSub(builder, type, lhs, rhs)
+			case .Multiply:
+				return spv.OpFMul(builder, type, lhs, rhs)
+			case .Divide:
+				return spv.OpFDiv(builder, type, lhs, rhs)
+			case .Modulo:
+				return spv.OpFMod(builder, type, lhs, rhs)
+			}
+
 		case:
-			unreachable()
+			panic("")
 		}
 	case ^ast.Expr_Ident:
 		value := cg_lookup_entity(ctx, v.ident.text).value
@@ -410,6 +476,28 @@ cg_expr :: proc(ctx: ^CG_Context, builder: ^spv.Builder, expr: ^ast.Expr, deref 
 	case ^ast.Expr_Proc_Sig:
 	case ^ast.Expr_Paren:
 	case ^ast.Expr_Selector:
+		lhs := cg_expr(ctx, builder, v.lhs, false)
+
+		lhs_type := v.lhs.type
+		assert(lhs_type.kind == .Struct)
+
+		field_index: int = -1
+		for field, i in lhs_type.variant.(^types.Struct).fields {
+			if field.name.text == v.selector.text {
+				field_index = i
+				break
+			}
+		}
+		assert(field_index != -1)
+
+		ptr := spv.OpAccessChain(builder, cg_type(ctx, v.type).ptr_type, lhs, cg_constant(ctx, i64(field_index)))
+
+		if deref {
+			return spv.OpLoad(builder, cg_type(ctx, v.type).type, ptr)
+		} else {
+			return ptr
+		}
+
 	case ^ast.Expr_Call:
 		if v.is_cast {
 			
@@ -419,7 +507,7 @@ cg_expr :: proc(ctx: ^CG_Context, builder: ^spv.Builder, expr: ^ast.Expr, deref 
 			for &arg, i in args {
 				arg = cg_expr(ctx, builder, v.args[i].value)
 			}
-			spv.OpFunctionCall(builder, cg_type(ctx, expr.type).type, fn, ..args)
+			return spv.OpFunctionCall(builder, cg_type(ctx, expr.type).type, fn, ..args)
 		}
 	case ^ast.Expr_Compound:
 	case ^ast.Expr_Index:
@@ -477,6 +565,8 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt) -> (re
 		cg_scope_push(ctx, v.label.text)
 		defer cg_scope_pop(ctx)
 
+		cg_stmt_list(ctx, builder, v.body)
+
 	case ^ast.Stmt_If:
 		cg_scope_push(ctx, v.label.text)
 		defer cg_scope_pop(ctx)
@@ -484,20 +574,40 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt) -> (re
 		cg_stmt(ctx, builder, v.init)
 		cond := cg_expr(ctx, builder, v.cond)
 
-		body := &spv.Builder{ current_id = &ctx.current_id, }
+		then_block := &spv.Builder{ current_id = &ctx.current_id, }
+		else_block := &spv.Builder{ current_id = &ctx.current_id, }
+		end_block  := &spv.Builder{ current_id = &ctx.current_id, }
 
-		true_label := spv.OpLabel(body)
-		cg_stmt_list(ctx, body, v.body)
-		false_label := spv.OpLabel(body)
+		end_label := spv.OpLabel(end_block)
 
-		spv.OpSelectionMerge(builder, false_label, {})
+		cg_scope_push(ctx)
+		true_label := spv.OpLabel(then_block)
+		cg_stmt_list(ctx, then_block, v.then_block)
+		spv.OpBranch(then_block, end_label)
+		cg_scope_pop(ctx)
+		
+		cg_scope_push(ctx)
+		false_label := spv.OpLabel(else_block)
+		cg_stmt_list(ctx, else_block, v.else_block)
+		spv.OpBranch(else_block, end_label)
+		cg_scope_pop(ctx)
+
+		spv.OpSelectionMerge(builder, end_label, {})
 		spv.OpBranchConditional(builder, cond, true_label, false_label)
-		append(&builder.data, ..body.data[:])
+
+		append(&builder.data, ..then_block.data[:])
+		append(&builder.data, ..else_block.data[:])
+		append(&builder.data, ..end_block.data[:])
 	case ^ast.Stmt_Switch:
 		cg_scope_push(ctx, v.label.text)
 		defer cg_scope_pop(ctx)
 
 	case ^ast.Stmt_Assign:
+		for value, i in v.rhs {
+			id := cg_expr(ctx, builder, v.lhs[i], deref = false)
+			v  := cg_expr(ctx, builder, value)
+			spv.OpStore(builder, id, v)
+		}
 	case ^ast.Stmt_Expr:
 		cg_expr(ctx, builder, v.expr)
 

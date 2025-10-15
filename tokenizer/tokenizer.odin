@@ -54,6 +54,7 @@ Token_Kind :: enum u16 {
 
 	Return, _Keyword_Start = Return,
 	If,
+	Else,
 	For,
 	Break,
 	Continue,
@@ -75,6 +76,7 @@ Token_Kind :: enum u16 {
 keyword_strings := map[string]Token_Kind{
 	"return"      = .Return,
 	"if"          = .If,
+	"else"        = .Else,
 	"for"         = .For,
 	"break"       = .Break,
 	"continue"    = .Continue,
@@ -427,6 +429,7 @@ token_strings := #sparse[Token_Kind]string {
 
 	.Return      = "return",
 	.If          = "if",
+	.Else        = "else",
 	.For         = "for",
 	.Break       = "break",
 	.Continue    = "continue",

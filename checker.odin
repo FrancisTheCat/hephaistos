@@ -270,7 +270,9 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			error(checker, cond, "expected a boolean expression in if statement condition but got: %v", cond.type)
 		}
 
-		return check_stmt_list(checker, v.body)
+		then_diverging := check_stmt_list(checker, v.then_block)
+		else_diverging := check_stmt_list(checker, v.else_block)
+		return then_diverging && else_diverging
 	case ^ast.Stmt_Switch:
 		scope_push(checker, .Block).label = v.label
 		defer scope_pop(checker)
@@ -322,17 +324,21 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			}
 		}
 
+		v.types = make([]^types.Type, len(lhs))
+
 		lhs_i := 0
-		check_assignment_types: for &r in rhs {
+		check_assignment_types: for &r, rhs_i in rhs {
 			if r.type.kind == .Tuple {
 				for field in r.type.variant.(^types.Struct).fields {
 					if lhs_i >= len(lhs) {
 						lhs_i += 1
 						continue
 					}
-					if types.op_result_type(lhs[lhs_i].type, field.type).kind == .Invalid {
+					result_type := types.op_result_type(lhs[lhs_i].type, field.type)
+					if result_type.kind == .Invalid {
 						error(checker, v, "mismatched types in assign statement: %v vs %v", lhs[lhs_i].type, field.type)
 					}
+					v.types[lhs_i] = result_type
 					lhs_i += 1
 				}
 			} else {
@@ -340,10 +346,13 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					lhs_i += 1
 					continue
 				}
-				l := lhs[lhs_i]
-				if types.op_result_type(l.type, r.type).kind == .Invalid {
-					error(checker, v, "mismatched types in assign statement: %v vs %v", l.type, r.type)
+				result_type := types.op_result_type(lhs[lhs_i].type, r.type)
+				if result_type.kind == .Invalid {
+					error(checker, v, "mismatched types in assign statement: %v vs %v", lhs[lhs_i].type, r.type)
+				} else if types.is_float(result_type) && types.is_integer(r.type) {
+					v.rhs[rhs_i].const_value = f64(v.rhs[rhs_i].const_value.(i64))
 				}
+				v.types[lhs_i] = result_type
 				lhs_i += 1
 			}
 		}

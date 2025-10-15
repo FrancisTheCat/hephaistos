@@ -179,7 +179,8 @@ Stmt_If :: struct {
 	label:      tokenizer.Token,
 	init:       ^Stmt,
 	cond:       ^Expr,
-	body:       []^Stmt,
+	then_block: []^Stmt,
+	else_block: []^Stmt,
 }
 
 Switch_Case :: struct {
@@ -200,6 +201,7 @@ Stmt_Assign :: struct {
 	using node: Stmt,
 	lhs, rhs:   []^Expr,
 	op:         tokenizer.Token_Kind,
+	types:      []^types.Type,
 }
 
 Stmt_Expr :: struct {
