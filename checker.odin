@@ -156,13 +156,6 @@ scope_insert_entity :: proc(checker: ^Checker, e: ^Entity) -> bool {
 		return false
 	}
 
-	if e.kind == .Var {
-		if proc_scope, ok := lookup_scope_by_kind(checker, { .Proc, }); ok {
-			append(&proc_scope.procedure.(Scope_Proc_Info).lit.vars, e.decl)
-			assert(e.decl != nil)
-		}
-	}
-	
 	checker.scope.elements[e.name] = e
 	return true
 }

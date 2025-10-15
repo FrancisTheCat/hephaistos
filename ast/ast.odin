@@ -64,8 +64,6 @@ Expr_Proc_Lit :: struct {
 	args:       []Field,
 	returns:    []Field,
 	body:       []^Stmt,
-
-	vars:       [dynamic]^Decl,
 }
 
 Expr_Proc_Sig :: struct {

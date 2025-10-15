@@ -23,10 +23,7 @@ Type_Hash_Entry :: struct {
 	info: CG_Type_Info,
 }
 
-Type_Registry :: struct {
-	table:   [][dynamic]Type_Hash_Entry,
-	aliases: map[^types.Type][dynamic]^types.Type, // map[target]([]aliases)
-}
+Type_Registry :: [][dynamic]Type_Hash_Entry
 
 CG_Context :: struct {
 	constant_cache:   map[types.Const_Value]spv.Id,
@@ -40,14 +37,10 @@ CG_Context :: struct {
 	annotations:      spv.Builder,
 	types:            spv.Builder,
 	functions:        spv.Builder,
-	current:          spv.Builder,
 
 	current_id:       spv.Id,
 	checker:          ^Checker,
 	scopes:           [dynamic]CG_Scope,
-
-	// procedures:    map[^ast.Expr_Proc_Lit]spv.Id,
-	// decls:         map[^ast.Decl_Value][]spv.Id,
 }
 
 CG_Entity :: struct {
@@ -108,9 +101,8 @@ cg_init :: proc(ctx: ^CG_Context, checker: ^Checker) {
 	ctx.annotations.current_id      = &ctx.current_id
 	ctx.types.current_id            = &ctx.current_id
 	ctx.functions.current_id        = &ctx.current_id
-	ctx.current.current_id          = &ctx.current_id
 
-	ctx.type_registry.table = make([][dynamic]Type_Hash_Entry, 1024)
+	ctx.type_registry = make([][dynamic]Type_Hash_Entry, 1024)
 
 	append(&ctx.meta.data, spv.MAGIC_NUMBER)
 	append(&ctx.meta.data, spv.VERSION)
@@ -128,7 +120,7 @@ register_type :: proc(registry: ^Type_Registry, t: ^types.Type) -> (type_info: ^
 	if hash == 0 {
 		hash = 1
 	}
-	entry := &registry.table[hash % u64(len(registry.table))]
+	entry := &registry[hash % u64(len(registry))]
 	for &e in entry {
 		if e.type == t {
 			return &e.info, true
@@ -146,7 +138,7 @@ register_type :: proc(registry: ^Type_Registry, t: ^types.Type) -> (type_info: ^
 	return &entry[len(entry) - 1].info, false
 }
 
-cg_decl :: proc(ctx: ^CG_Context, decl: ^ast.Decl) {
+cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl) {
 	switch v in decl.derived_decl {
 	case ^ast.Decl_Value:
 		if v.mutable {
@@ -162,8 +154,8 @@ cg_decl :: proc(ctx: ^CG_Context, decl: ^ast.Decl) {
 					type      := v.types[i]
 					type_info := cg_type(ctx, type)
 					id        := spv.OpVariable(&ctx.functions, type_info.ptr_type, .Function, type_info.nil_value)
-					init      := cg_expr(ctx, value)
-					spv.OpStore(&ctx.current, id, init)
+					init      := cg_expr(ctx, builder, value)
+					spv.OpStore(builder, id, init)
 					name      := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
 					cg_insert_entity(ctx, name, .Var, type, id)
 				}
@@ -173,7 +165,7 @@ cg_decl :: proc(ctx: ^CG_Context, decl: ^ast.Decl) {
 				if value.type.kind != .Proc {
 					continue
 				}
-				id   := cg_expr(ctx, value)
+				id   := cg_expr(ctx, builder, value)
 				name := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
 				cg_insert_entity(ctx, name, .Proc, value.type, id)
 			}
@@ -196,7 +188,8 @@ cg_generate :: proc(ctx: ^CG_Context, stmts: []^ast.Stmt) -> []u32 {
 	// memory model
 	spv.OpMemoryModel(&ctx.meta, .Logical, .Simple)
 
-	cg_stmt_list(ctx, stmts)
+	b: spv.Builder = { current_id = &ctx.current_id }
+	cg_stmt_list(ctx, &b, stmts)
 
 	spirv := slice.concatenate([][]u32{
 		ctx.meta.data[:],
@@ -207,6 +200,7 @@ cg_generate :: proc(ctx: ^CG_Context, stmts: []^ast.Stmt) -> []u32 {
 		ctx.annotations.data[:],
 		ctx.types.data[:],
 		ctx.functions.data[:],
+		b.data[:],
 	})
 	spirv[spv.ID_BOUND_INDEX] = u32(ctx.current_id + 1)
 	return spirv
@@ -303,75 +297,94 @@ cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> (id: spv.Id) {
 	if len(type.args) == 0 {
 		spv.OpEntryPoint(&ctx.entry_points, .Vertex, id, "main")
 	}
-	cg_stmt_list(ctx, p.body)
-	append(&ctx.functions.data, ..ctx.current.data[:])
-	clear(&ctx.current.data)
+	body     := spv.Builder { current_id = &ctx.current_id, }
+	returned := cg_stmt_list(ctx, &body, p.body)
+	if !returned {
+		spv.OpReturn(&body)
+	}
+	append(&ctx.functions.data, ..body.data[:])
 	spv.OpFunctionEnd(&ctx.functions)
 
 	return
 }
 
-cg_expr :: proc(ctx: ^CG_Context, expr: ^ast.Expr, deref := true) -> spv.Id {
+cg_expr :: proc(ctx: ^CG_Context, builder: ^spv.Builder, expr: ^ast.Expr, deref := true) -> spv.Id {
 	assert(expr != nil)
 
 	if expr.const_value != nil {
 		return cg_constant(ctx, expr.const_value)
 	}
-	start := len(ctx.current.data)
-	defer if len(ctx.current.data) != start {
-		fmt.println(transmute([2]u16)ctx.current.data[start], ctx.current.data[start + 1:])
+	start := len(builder.data)
+	defer if len(builder.data) != start {
+		fmt.println(transmute([2]u16)builder.data[start], builder.data[start + 1:])
 	}
 
 	switch v in expr.derived_expr {
 	case ^ast.Expr_Constant:
 		return cg_constant(ctx, expr.const_value)
 	case ^ast.Expr_Binary:
-		lhs, rhs := cg_expr(ctx, v.lhs), cg_expr(ctx, v.rhs)
+		lhs, rhs := cg_expr(ctx, builder, v.lhs), cg_expr(ctx, builder, v.rhs)
 		type := cg_type(ctx, v.type).type
+
+		if op_is_relation(v.op) {
+			t := types.default_type(types.op_result_type(v.lhs.type, v.rhs.type))
+			#partial switch t.kind {
+			case .Int:
+				return spv.OpIEqual(builder, type, lhs, rhs)
+			case .Uint:
+				return spv.OpIEqual(builder, type, lhs, rhs)
+			case .Float:
+				return spv.OpFOrdEqual(builder, type, lhs, rhs)
+			case:
+				unimplemented()
+			}
+			return 0
+		}
+
 		#partial switch v.type.kind {
 		case .Int:
 			#partial switch v.op {
 			case .Add:
-				return spv.OpIAdd(&ctx.current, type, lhs, rhs)
+				return spv.OpIAdd(builder, type, lhs, rhs)
 			case .Subtract:
-				return spv.OpISub(&ctx.current, type, lhs, rhs)
+				return spv.OpISub(builder, type, lhs, rhs)
 			case .Multiply:
-				return spv.OpIMul(&ctx.current, type, lhs, rhs)
+				return spv.OpIMul(builder, type, lhs, rhs)
 			case .Divide:
-				return spv.OpSDiv(&ctx.current, type, lhs, rhs)
+				return spv.OpSDiv(builder, type, lhs, rhs)
 			case .Modulo:
-				return spv.OpSMod(&ctx.current, type, lhs, rhs)
+				return spv.OpSMod(builder, type, lhs, rhs)
 			}
 		case .Uint:
 			#partial switch v.op {
 			case .Add:
-				return spv.OpIAdd(&ctx.current, type, lhs, rhs)
+				return spv.OpIAdd(builder, type, lhs, rhs)
 			case .Subtract:
-				return spv.OpISub(&ctx.current, type, lhs, rhs)
+				return spv.OpISub(builder, type, lhs, rhs)
 			case .Multiply:
-				return spv.OpIMul(&ctx.current, type, lhs, rhs)
+				return spv.OpIMul(builder, type, lhs, rhs)
 			case .Divide:
-				return spv.OpUDiv(&ctx.current, type, lhs, rhs)
+				return spv.OpUDiv(builder, type, lhs, rhs)
 			case .Modulo:
-				return spv.OpUMod(&ctx.current, type, lhs, rhs)
+				return spv.OpUMod(builder, type, lhs, rhs)
 			}
 		case .Float:
 			#partial switch v.op {
 			case .Add:
-				return spv.OpFAdd(&ctx.current, type, lhs, rhs)
+				return spv.OpFAdd(builder, type, lhs, rhs)
 			case .Subtract:
-				return spv.OpFSub(&ctx.current, type, lhs, rhs)
+				return spv.OpFSub(builder, type, lhs, rhs)
 			case .Multiply:
-				return spv.OpFMul(&ctx.current, type, lhs, rhs)
+				return spv.OpFMul(builder, type, lhs, rhs)
 			case .Divide:
-				return spv.OpFDiv(&ctx.current, type, lhs, rhs)
+				return spv.OpFDiv(builder, type, lhs, rhs)
 			case .Modulo:
-				return spv.OpFMod(&ctx.current, type, lhs, rhs)
+				return spv.OpFMod(builder, type, lhs, rhs)
 			}
 		case .Bool:
 			#partial switch v.op {
 			case .Equal:
-				return spv.OpLogicalEqual(&ctx.current, type, lhs, rhs)
+				return spv.OpLogicalEqual(builder, type, lhs, rhs)
 			}
 			unimplemented()
 		case .Matrix:
@@ -388,7 +401,7 @@ cg_expr :: proc(ctx: ^CG_Context, expr: ^ast.Expr, deref := true) -> spv.Id {
 			return value.id
 		}
 		if value.ptr {
-			return spv.OpLoad(&ctx.current, cg_type(ctx, v.type).type, value.id)
+			return spv.OpLoad(builder, cg_type(ctx, v.type).type, value.id)
 		} else {
 			return value.id
 		}
@@ -401,19 +414,19 @@ cg_expr :: proc(ctx: ^CG_Context, expr: ^ast.Expr, deref := true) -> spv.Id {
 		if v.is_cast {
 			
 		} else {
-			fn   := cg_expr(ctx, v.lhs)
+			fn   := cg_expr(ctx, builder, v.lhs)
 			args := make([]spv.Id, len(v.args))
 			for &arg, i in args {
-				arg = cg_expr(ctx, v.args[i].value)
+				arg = cg_expr(ctx, builder, v.args[i].value)
 			}
-			spv.OpFunctionCall(&ctx.current, cg_type(ctx, expr.type).type, fn, ..args)
+			spv.OpFunctionCall(builder, cg_type(ctx, expr.type).type, fn, ..args)
 		}
 	case ^ast.Expr_Compound:
 	case ^ast.Expr_Index:
-		lhs := cg_expr(ctx, v.lhs)
-		rhs := cg_expr(ctx, v.rhs)
+		lhs := cg_expr(ctx, builder, v.lhs)
+		rhs := cg_expr(ctx, builder, v.rhs)
 
-		return spv.OpAccessChain(&ctx.current, cg_type(ctx, v.type).type, lhs, rhs)
+		return spv.OpAccessChain(builder, cg_type(ctx, v.type).type, lhs, rhs)
 	case ^ast.Expr_Cast:
 	case ^ast.Expr_Unary:
 	
@@ -425,14 +438,31 @@ cg_expr :: proc(ctx: ^CG_Context, expr: ^ast.Expr, deref := true) -> spv.Id {
 	return 0
 }
 
-cg_stmt :: proc(ctx: ^CG_Context, stmt: ^ast.Stmt) {
+// @(require_results)
+// cg_scope :: proc(ctx: ^CG_Context, stmts: []^ast.Stmt, label: string = "") -> (instructions: []u32, returned: bool) {
+// 	cg_scope_push(ctx, label)
+// 	defer cg_scope_pop(ctx)
+
+// 	c := ctx.current
+// 	defer ctx.current = c
+
+// 	ctx.current.data       = make([dynamic]u32)
+// 	ctx.current.current_id = &ctx.current_id
+
+// 	returned     = cg_stmt_list(ctx, stmts)
+// 	instructions = ctx.current.data[:]
+// 	return
+// }
+
+cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt) -> (returned: bool) {
 	if stmt == nil {
 		return
 	}
 
 	switch v in stmt.derived_stmt {
 	case ^ast.Stmt_Return:
-		spv.OpReturn(&ctx.current)
+		spv.OpReturn(builder)
+		return true
 	case ^ast.Stmt_Break:
 	case ^ast.Stmt_Continue:
 	case ^ast.Stmt_For_Range:
@@ -451,24 +481,38 @@ cg_stmt :: proc(ctx: ^CG_Context, stmt: ^ast.Stmt) {
 		cg_scope_push(ctx, v.label.text)
 		defer cg_scope_pop(ctx)
 
-		// cg_stmt(ctx, v.init)
-		// cond := cg_expr(ctx, v.cond)
-		// spv.OpBranchConditional(&ctx.functions, cond, 1, 1)
+		cg_stmt(ctx, builder, v.init)
+		cond := cg_expr(ctx, builder, v.cond)
+
+		body := &spv.Builder{ current_id = &ctx.current_id, }
+
+		true_label := spv.OpLabel(body)
+		cg_stmt_list(ctx, body, v.body)
+		false_label := spv.OpLabel(body)
+
+		spv.OpSelectionMerge(builder, false_label, {})
+		spv.OpBranchConditional(builder, cond, true_label, false_label)
+		append(&builder.data, ..body.data[:])
 	case ^ast.Stmt_Switch:
 		cg_scope_push(ctx, v.label.text)
 		defer cg_scope_pop(ctx)
 
 	case ^ast.Stmt_Assign:
 	case ^ast.Stmt_Expr:
-		cg_expr(ctx, v.expr)
+		cg_expr(ctx, builder, v.expr)
 
 	case ^ast.Decl_Value:
-		cg_decl(ctx, v)
+		cg_decl(ctx, builder, v)
 	}
+
+	return false
 }
 
-cg_stmt_list :: proc(ctx: ^CG_Context, stmts: []^ast.Stmt) {
+cg_stmt_list :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmts: []^ast.Stmt) -> (returned: bool) {
 	for stmt in stmts {
-		cg_stmt(ctx, stmt)
+		if cg_stmt(ctx, builder, stmt) {
+			returned = true
+		}
 	}
+	return returned
 }
