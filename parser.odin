@@ -1,0 +1,724 @@
+#+feature dynamic-literals
+package hephaistos
+
+import "base:runtime"
+
+import "core:fmt"
+import "core:reflect"
+import "core:strings"
+
+import "ast"
+import "tokenizer"
+
+Parser :: struct {
+	current:         int,
+	tokens:          []tokenizer.Token,
+	errors:          [dynamic]tokenizer.Error,
+	end_location:    tokenizer.Location,
+	error_allocator: runtime.Allocator,
+	global_stmts:    []^ast.Stmt,
+}
+
+token_peek :: proc(parser: ^Parser, lookahead := 0) -> tokenizer.Token {
+	return parser.tokens[min(parser.current + lookahead, len(parser.tokens) - 1)]
+}
+
+token_advance :: proc(parser: ^Parser) -> (t: tokenizer.Token) {
+	t = token_peek(parser)
+	parser.end_location = t.location
+	parser.end_location.column += len(t.text)
+	parser.end_location.offset += len(t.text)
+	parser.current += 1
+	return
+}
+
+error_parser_start_end :: proc(parser: ^Parser, start, end: tokenizer.Location, format: string, args: ..any) {
+	append(&parser.errors, tokenizer.Error {
+		location = start,
+		end      = end,
+		message  = fmt.aprintf(format, ..args, allocator = parser.error_allocator),
+	})
+}
+
+error_parser_single_token :: proc(parser: ^Parser, token: tokenizer.Token, format: string, args: ..any) {
+	append(&parser.errors, tokenizer.Error {
+		location = token.location,
+		end      = {
+			line   = token.location.line,
+			column = token.location.column + len(token.text),
+			offset = token.location.offset + len(token.text),
+		},
+		message  = fmt.aprintf(format, ..args, allocator = parser.error_allocator),
+	})
+}
+
+token_expect :: proc(parser: ^Parser, kind: tokenizer.Token_Kind, after: string = "") -> (token: tokenizer.Token, ok: bool) {
+	token = token_advance(parser)
+	if token.kind != kind {
+		e := tokenizer.to_string(kind)
+		g := tokenizer.to_string(token.kind)
+		if after != "" {
+			error(parser, token, "expected '%s' after %s, got '%s'", e, after, g)
+		} else {
+			error(parser, token, "expected '%s', got '%s'", e, g)
+		}
+		return
+	}
+	ok = true
+	return
+}
+
+parse_field_list :: proc(parser: ^Parser, terminator: tokenizer.Token_Kind, allow_default_values: bool) -> (_fields: []ast.Field, ok: bool) {
+	fields := make([dynamic]ast.Field)
+
+	loop: for {
+		#partial switch token_peek(parser).kind {
+		case terminator, .EOF:
+			break loop
+		}
+		ident := token_expect(parser, .Ident) or_return
+		token_expect(parser, .Colon) or_return
+
+		type: ^ast.Expr
+		if token_peek(parser).kind != .Assign {
+			type = parse_expr(parser) or_return
+		}
+
+		value: ^ast.Expr
+		if token_peek(parser).kind == .Assign {
+			token_advance(parser)
+			value = parse_expr(parser) or_return
+		}
+
+		append(&fields, ast.Field {
+			ident = ident,
+			value = value,
+			type  = type,
+		})
+
+		if token_peek(parser).kind == .Comma {
+			token_advance(parser)
+		} else {
+			break
+		}
+	}
+
+	token_expect(parser, terminator)
+
+	return fields[:], true
+}
+
+parse_arg_list :: proc(parser: ^Parser, terminator: tokenizer.Token_Kind) -> (_fields: []ast.Field, ok: bool) {
+	fields := make([dynamic]ast.Field)
+
+	loop: for {
+		#partial switch token_peek(parser).kind {
+		case terminator, .EOF:
+			break loop
+		}
+
+		ident: tokenizer.Token
+		if token_peek(parser, 1).kind == .Assign {
+			ident = token_expect(parser, .Ident) or_return
+			token_expect(parser, .Assign) or_return
+		}
+
+		value := parse_expr(parser) or_return
+
+		append(&fields, ast.Field {
+			ident = ident,
+			value = value,
+		})
+
+		if token_peek(parser).kind == .Comma {
+			token_advance(parser)
+		} else {
+			break
+		}
+	}
+	token_expect(parser, terminator)
+
+	return fields[:], true
+}
+
+parse_proc_signature :: proc(parser: ^Parser) -> (args, returns: []ast.Field, ok: bool) {
+	token_expect(parser, .Proc) or_return
+	token_expect(parser, .Open_Paren)
+	args = parse_field_list(parser, .Close_Paren, true) or_return
+
+	if token_peek(parser).kind == .Arrow {
+		token_advance(parser)
+
+		if token_peek(parser).kind == .Open_Paren {
+			token_advance(parser)
+			returns = parse_field_list(parser, .Close_Paren, true) or_return
+		} else {
+			returns         = make([]ast.Field, 1)
+			returns[0].type = parse_expr(parser) or_return
+		}
+	}
+
+	return args, returns, true
+}
+
+parse_stmt_list :: proc(
+	parser:          ^Parser,
+	terminator:       tokenizer.Token_Kind = .Close_Brace,
+	extra_terminator: tokenizer.Token_Kind = nil,
+) -> (_stmts: []^ast.Stmt, ok: bool) {
+	for token_peek(parser).kind == .Semicolon {
+		token_advance(parser)
+	}
+
+	stmts := make([dynamic]^ast.Stmt)
+	for {
+		#partial switch token_peek(parser).kind {
+		case .EOF:
+			token_expect(parser, terminator) or_return
+			return stmts[:], true
+		case terminator, extra_terminator:
+			return stmts[:], true
+		}
+
+		stmt, ok := parse_stmt(parser)
+		if ok {
+			append(&stmts, stmt)
+		} else {
+			for token_peek(parser).kind != .Semicolon && token_peek(parser).kind != .EOF {
+				token_advance(parser)
+			}
+		}
+
+		for token_peek(parser).kind == .Semicolon {
+			token_advance(parser)
+		}
+	}
+}
+
+parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
+	token := token_peek(parser) 
+	#partial switch token.kind {
+	case .Ident:
+		token_advance(parser)
+		expr := ast.new(ast.Expr_Ident, token.location, parser.end_location)
+		expr.ident = token
+		return expr, true
+
+	case .Literal:
+		token_advance(parser)
+		expr := ast.new(ast.Expr_Constant, token.location, parser.end_location)
+		#partial switch token.value_kind {
+		case .Int:
+			expr.value = token.value.int
+		case .Float:
+			expr.value = token.value.float
+		case .Bool:
+			expr.value = token.value.bool
+		case:
+			unreachable()
+		}
+		return expr, true
+
+	case .Open_Brace:
+		token_advance(parser)
+		fields := parse_arg_list(parser, .Close_Brace) or_return
+		expr   := ast.new(ast.Expr_Compound, token.location, parser.end_location)
+		expr.fields = fields
+		return expr, true
+
+	case .Proc:
+		args, returns := parse_proc_signature(parser) or_return
+		if token_peek(parser).kind == .Open_Brace {
+			token_advance(parser)
+			body := parse_stmt_list(parser) or_return
+			token_advance(parser)
+
+			lit := ast.new(ast.Expr_Proc_Lit, token.location, parser.end_location)
+			lit.args    = args
+			lit.returns = returns
+			lit.body    = body
+			return lit, true
+		} else {
+			sig := ast.new(ast.Expr_Proc_Sig, token.location, parser.end_location)
+			sig.args    = args
+			sig.returns = returns
+			return sig, true
+		}
+
+	case .Struct:
+		token_advance(parser)
+		token_expect(parser, .Open_Brace) or_return
+		fields := parse_field_list(parser, .Close_Brace, false) or_return
+		s := ast.new(ast.Type_Struct, token.location, parser.end_location)
+		s.fields = fields
+		return s, true
+
+	case .Matrix:
+		token_advance(parser)
+		token_expect(parser, .Open_Bracket) or_return
+		rows := parse_expr(parser) or_return
+		cols: ^ast.Expr
+		if token_peek(parser).kind == .Comma {
+			token_advance(parser)
+			cols = parse_expr(parser) or_return
+		}
+		token_expect(parser, .Close_Bracket) or_return
+		elem := parse_expr(parser) or_return
+
+		m := ast.new(ast.Type_Matrix, token.location, parser.end_location)
+		m.rows = rows
+		m.cols = cols
+		m.elem = elem
+		return m, true
+
+	case .Vector:
+		token_advance(parser)
+		fallthrough
+	case .Open_Bracket:
+		token_expect(parser, .Open_Bracket) or_return
+		count := parse_expr(parser) or_return
+		token_expect(parser, .Close_Bracket) or_return
+		elem := parse_expr(parser) or_return
+
+		a := ast.new(ast.Type_Array, token.location, parser.end_location)
+		a.count = count
+		a.elem = elem
+		return a, true
+
+	case .Open_Paren:
+		token_advance(parser)
+		expr := parse_expr(parser) or_return
+		token_expect(parser, .Close_Paren) or_return
+		paren := ast.new(ast.Expr_Paren, token.location, parser.end_location)
+		paren.expr = expr
+		return paren, true
+
+	case .Add, .Subtract, .Xor:
+		token_advance(parser)
+		expr  := parse_atom_expr(parser) or_return
+		unary := ast.new(ast.Expr_Unary, token.location, parser.end_location)
+		unary.expr = expr
+		return unary, true
+	}
+
+	error(parser, token, "unexpected token")
+	return
+}
+
+binding_powers: map[tokenizer.Token_Kind]int = {
+	.And           = 3,
+	.Or            = 3,
+
+	.Less          = 4,
+	.Greater       = 4,
+	.Equal         = 4,
+	.Not_Equal     = 4,
+	.Less_Equal    = 4,
+	.Greater_Equal = 4,
+
+	.Add      = 5,
+	.Subtract = 5,
+
+	.Multiply = 6,
+	.Divide   = 6,
+
+	.Exponent = 7,
+}
+
+parse_expr :: proc(parser: ^Parser, min_power := 0) -> (expr: ^ast.Expr, ok: bool) {
+	lhs := parse_atom_expr(parser) or_return
+	for {
+		op := token_peek(parser)
+		#partial switch op.kind {
+		case .Period:
+			token_advance(parser)
+			ident    := token_expect(parser, .Ident) or_return
+			selector := ast.new(ast.Expr_Selector, lhs.start, parser.end_location)
+			selector.lhs      = lhs
+			selector.selector = ident
+			lhs               = selector
+			continue
+
+		case .Open_Paren:
+			token_advance(parser)
+			args := parse_arg_list(parser, .Close_Paren) or_return
+			call := ast.new(ast.Expr_Call, lhs.start, parser.end_location)
+			call.lhs  = lhs
+			call.args = args
+			lhs       = call
+			continue
+
+		case .Open_Bracket:
+			token_advance(parser)
+			rhs := parse_expr(parser) or_return
+			token_expect(parser, .Close_Bracket) or_return
+			index := ast.new(ast.Expr_Index, lhs.start, parser.end_location)
+			index.lhs = lhs
+			index.rhs = rhs
+			lhs       = index
+			continue
+		}
+
+		power := binding_powers[op.kind] or_break
+		if power <= min_power {
+			break
+		}
+		token_advance(parser)
+		rhs := parse_expr(parser, power) or_return
+		e   := ast.new(ast.Expr_Binary, lhs.start, parser.end_location)
+
+		e.op  = op.kind
+		e.lhs = lhs
+		e.rhs = rhs
+
+		lhs  = e
+	}
+	return lhs, true
+}
+
+parse_expr_list :: proc(parser: ^Parser) -> (exprs: []^ast.Expr, ok: bool) {
+	es := make([dynamic]^ast.Expr)
+	for token_peek(parser).kind != .EOF {
+		append(&es, parse_expr(parser) or_return)
+		if token_peek(parser).kind == .Comma {
+			token_advance(parser)
+		} else {
+			break
+		}
+	}
+	return es[:], true
+}
+
+parse_simple_stmt :: proc(parser: ^Parser) -> (stmt: ^ast.Stmt, ok: bool) {
+	token := token_peek(parser)
+	#partial switch token.kind {
+	case .Literal:
+		expr := parse_expr(parser) or_return
+		se   := ast.new(ast.Stmt_Expr, token.location, parser.end_location)
+		se.expr = expr
+		return se, true
+	case .Ident, .Cast, .Open_Paren:
+		lhs := parse_expr_list(parser) or_return
+		#partial switch t := token_peek(parser); t.kind {
+		case .Assign:
+			assign_token := token_advance(parser)
+			rhs          := parse_expr_list(parser) or_return
+			assign       := ast.new(ast.Stmt_Assign, token.location, parser.end_location)
+			assign.lhs    = lhs[:]
+			assign.rhs    = rhs
+			assign.op     = assign_token.value.op
+			return assign, true
+		case .Colon:
+			token_advance(parser)
+			if token_peek(parser).kind == .Assign || token_peek(parser).kind == .Colon {
+				mutable     := token_advance(parser).kind == .Assign
+				values      := parse_expr_list(parser) or_return
+				decl        := ast.new(ast.Decl_Value, token.location, parser.end_location)
+				decl.lhs     = lhs
+				decl.values  = values
+				decl.mutable = mutable
+				return decl, true
+			} else {
+				type := parse_expr(parser) or_return
+				if token_peek(parser).kind == .Assign || token_peek(parser).kind == .Colon {
+					mutable       := token_advance(parser).kind == .Assign
+					values        := parse_expr_list(parser) or_return
+					decl          := ast.new(ast.Decl_Value, token.location, parser.end_location)
+					decl.lhs       = lhs
+					decl.values    = values
+					decl.mutable   = mutable
+					decl.type_expr = type
+					return decl, true
+				} else {
+					decl          := ast.new(ast.Decl_Value, token.location, parser.end_location)
+					decl.lhs       = lhs
+					decl.mutable   = true
+					decl.type_expr = type
+					return decl, true
+				}
+			}
+		case:
+			if len(lhs) == 1 {
+				se := ast.new(ast.Stmt_Expr, token.location, parser.end_location)
+				se.expr = lhs[0]
+				return se, true
+			}
+		}
+
+		// ident := token_advance(parser)
+
+		// token_expect(parser, .Colon) or_return
+
+		// type: ^ast.Expr
+		// #partial switch token_peek(parser).kind {
+		// case .Colon, .Assign:
+		// case:
+		// 	type = parse_expr(parser) or_return
+		// }
+
+		// value:  ^ast.Expr
+		// mutable: bool
+		// #partial switch token_peek(parser).kind {
+		// case .Assign:
+		// 	mutable = true
+		// 	fallthrough
+		// case .Colon:
+		// 	token_advance(parser)
+		// 	value = parse_expr(parser) or_return
+		// }
+
+		// value_decl := ast.new(ast.Decl_Value, ident.location, parser.end_location)
+		// value_decl.type    = type
+		// value_decl.name    = ident
+		// value_decl.value   = value
+		// value_decl.mutable = mutable
+
+		// return value_decl, true
+	case .Return:
+		token_advance(parser)
+		values := make([dynamic]^ast.Expr)
+		for token_peek(parser).kind != .Semicolon {
+			if len(values) != 0 {
+				token_expect(parser, .Comma)
+			}
+			value := parse_expr(parser) or_return
+			append(&values, value)
+		}
+		ret := ast.new(ast.Stmt_Return, token.location, parser.end_location)
+		ret.values = values[:]
+
+		return ret, true
+	case .Continue:
+		token_advance(parser)
+		label: tokenizer.Token
+		if token_peek(parser).kind == .Ident {
+			label = token_advance(parser)
+		}
+		cont := ast.new(ast.Stmt_Continue, token.location, parser.end_location)
+		cont.label = label
+
+		return cont, true
+	case .Break:
+		token_advance(parser)
+		label: tokenizer.Token
+		if token_peek(parser).kind == .Ident {
+			label = token_advance(parser)
+		}
+		brk := ast.new(ast.Stmt_Break, token.location, parser.end_location)
+		brk.label = label
+
+		return brk, true
+	}
+
+	error(parser, token, "unexpected token")
+	return
+}
+
+parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}) -> (stmt: ^ast.Stmt, ok: bool) {
+	token := token_peek(parser)
+	#partial switch token.kind {
+	case .Return, .Continue, .Break, .Literal, .Open_Paren, .Cast:
+		return parse_simple_stmt(parser)
+	case .Ident:
+		if token_peek(parser, 1).kind == .Colon {
+			#partial switch token_peek(parser, 2).kind {
+			case .For, .If, .Switch, .Open_Brace:
+				token_advance(parser)
+				token_advance(parser)
+				return parse_stmt(parser, token)
+			}
+		}
+		return parse_simple_stmt(parser)
+	case .For:
+		token_advance(parser)
+		init: ^ast.Stmt
+		cond: ^ast.Expr
+		post: ^ast.Stmt
+
+		parse_header: if token_peek(parser).kind != .Open_Brace {
+			if token_peek(parser).kind == .Semicolon {
+				token_advance(parser)
+			} else {
+				s := parse_simple_stmt(parser) or_return
+				if expr_stmt, ok := s.derived.(^ast.Stmt_Expr); ok {
+					cond = expr_stmt.expr
+					break parse_header
+				}
+				init = s
+				token_expect(parser, .Semicolon) or_return
+			}
+
+			if token_peek(parser).kind != .Semicolon {
+				cond = parse_expr(parser) or_return
+			}
+			token_expect(parser, .Semicolon) or_return
+
+			if token_peek(parser).kind != .Open_Brace {
+				post = parse_simple_stmt(parser) or_return
+			}
+		}
+
+		token_expect(parser, .Open_Brace) or_return
+
+		body := parse_stmt_list(parser) or_return
+		token_advance(parser)
+
+		for_stmt := ast.new(ast.Stmt_For, token.location, parser.end_location)
+		for_stmt.label = label
+		for_stmt.init  = init
+		for_stmt.cond  = cond
+		for_stmt.post  = post
+		for_stmt.body  = body
+		return for_stmt, true
+	case .If:
+		token_advance(parser)
+		init: ^ast.Stmt
+		cond: ^ast.Expr
+		parse_if_header: {
+			s := parse_simple_stmt(parser) or_return
+			if expr_stmt, ok := s.derived.(^ast.Stmt_Expr); ok {
+				cond = expr_stmt.expr
+				break parse_if_header
+			}
+			init = s
+			token_expect(parser, .Semicolon) or_return
+			cond = parse_expr(parser) or_return
+		}
+
+		token_expect(parser, .Open_Brace) or_return
+		body := parse_stmt_list(parser) or_return
+		token_advance(parser)
+
+		if_stmt := ast.new(ast.Stmt_If, token.location, parser.end_location)
+		if_stmt.label = label
+		if_stmt.init  = init
+		if_stmt.cond  = cond
+		if_stmt.body  = body
+		return if_stmt, true
+	case .Switch:
+		token_advance(parser)
+		init: ^ast.Stmt
+		cond: ^ast.Expr
+		parse_switch_header: {
+			s := parse_simple_stmt(parser) or_return
+			if expr_stmt, ok := s.derived.(^ast.Stmt_Expr); ok {
+				cond = expr_stmt.expr
+				break parse_switch_header
+			}
+			init = s
+			token_expect(parser, .Semicolon) or_return
+			cond = parse_expr(parser) or_return
+		}
+
+		token_expect(parser, .Open_Brace) or_return
+
+		cases := make([dynamic]ast.Switch_Case)
+		for token_peek(parser).kind != .Close_Brace && !parser_at_end(parser) {
+			token_expect(parser, .Case) or_continue
+			value: ^ast.Expr
+			if token_peek(parser).kind != .Colon {
+				value = parse_expr(parser) or_continue
+			}
+			token_expect(parser, .Colon)
+			append(&cases, ast.Switch_Case {
+				value = value,
+				body  = parse_stmt_list(parser, .Close_Brace, .Case) or_continue,
+			})
+		}
+		token_expect(parser, .Close_Brace)
+
+		s := ast.new(ast.Stmt_Switch, token.location, parser.end_location)
+		s.init  = init
+		s.cond  = cond
+		s.cases = cases[:]
+
+		return s, true
+		
+	case .Open_Brace:
+		token_advance(parser)
+		stmts := parse_stmt_list(parser) or_return
+		token_advance(parser)
+
+		block := ast.new(ast.Stmt_Block, token.location, parser.end_location)
+		block.label = label
+		block.body  = stmts
+		return block, true
+	}
+
+	error(parser, token, "unexpected token")
+	return
+}
+
+print_expr :: proc(b: ^strings.Builder, expr: ^ast.Expr, indent := 0) {
+	if expr == nil {
+		return
+	}
+	for _ in 0 ..< indent {
+		fmt.sbprint(b, "\t")
+	}
+	fmt.sbprintln(b, expr.derived)
+	#partial switch v in expr.derived_expr {
+	case ^ast.Expr_Proc_Lit:
+		for s in v.body {
+			print_stmt(b, s, indent + 1)
+		}
+	case ^ast.Expr_Binary:
+		print_expr(b, v.lhs, indent + 1)
+		print_expr(b, v.rhs, indent + 1)
+	}
+}
+
+print_stmt :: proc(b: ^strings.Builder, stmt: ^ast.Stmt, indent := 0) {
+	if stmt == nil {
+		return
+	}
+	for _ in 0 ..< indent {
+		fmt.sbprint(b, "\t")
+	}
+	fmt.sbprintfln(b, "%v", reflect.union_variant_typeid(stmt.derived))
+	switch v in stmt.derived_stmt {
+	case ^ast.Stmt_Return:
+		for v in v.values {
+			print_expr(b, v, indent + 1)
+		}
+	case ^ast.Stmt_Break:
+	case ^ast.Stmt_Continue:
+	case ^ast.Stmt_For_Range:
+		for s in v.body {
+			print_stmt(b, s, indent + 1)
+		}
+	case ^ast.Stmt_For:
+		for s in v.body {
+			print_stmt(b, s, indent + 1)
+		}
+	case ^ast.Stmt_Block:
+		for s in v.body {
+			print_stmt(b, s, indent + 1)
+		}
+	case ^ast.Stmt_If:
+		for s in v.body {
+			print_stmt(b, s, indent + 1)
+		}
+	case ^ast.Stmt_Switch:
+	case ^ast.Stmt_Assign:
+	case ^ast.Stmt_Expr:
+
+	case ^ast.Decl_Value:
+		print_expr(b, v.type_expr,  indent + 1)
+		// print_expr(b, v.value, indent + 1)
+	}
+}
+
+parse :: proc(parser: ^Parser) -> (ok: bool) {
+	for token_peek(parser).kind == .Semicolon {
+		token_advance(parser)
+	}
+
+	parser.global_stmts, ok = parse_stmt_list(parser, .EOF)
+
+	return
+}
+
+parser_at_end :: proc(parser: ^Parser) -> bool {
+	return token_peek(parser).kind == .EOF
+}
