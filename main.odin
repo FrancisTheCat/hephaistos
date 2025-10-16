@@ -59,7 +59,7 @@ main :: proc() {
 	cg_init(&cg_ctx, &checker)
 	code := cg_generate(&cg_ctx, parser.global_stmts)
 
-	os.write_entire_file("a.out", slice.to_bytes(code))
+	os.write_entire_file("a.spv", slice.to_bytes(code))
 	fmt.println(code)
 }
 
