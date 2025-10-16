@@ -942,9 +942,16 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr) -> (operand: Ope
 		if rows.mode != .Const || (rows.type.kind != .Int && rows.type.kind != .Uint) {
 			error(checker, rows, "expected a constant integer")
 		}
-		cols := check_expr(checker, v.cols)
-		if cols.mode != .Const || (cols.type.kind != .Int && cols.type.kind != .Uint) {
-			error(checker, cols, "expected a constant integer")
+		cols: int
+		if v.cols == nil {
+			cols = int(rows.value.(i64) or_else 0)
+		} else {
+			cols_expr := check_expr(checker, v.cols)
+			if cols_expr.mode != .Const || (cols_expr.type.kind != .Int && cols_expr.type.kind != .Uint) {
+				error(checker, cols_expr, "expected a constant integer")
+			} else {
+				cols = int(cols_expr.value.(i64))
+			}
 		}
 
 		col_type      := types.type_new(.Vector, types.Vector)
@@ -956,7 +963,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr) -> (operand: Ope
 		type.col_type = col_type
 		type.col_type = col_type
 
-		type.cols  = int(cols.value.(i64) or_else 0)
+		type.cols  = cols
 		type.size  = col_type.size * type.cols
 		type.align = col_type.align
 
