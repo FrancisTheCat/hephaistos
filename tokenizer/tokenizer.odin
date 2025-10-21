@@ -172,7 +172,10 @@ tokenize :: proc(
 			},
 		}
 
-		defer column += current - start
+		set_column := true
+		defer if set_column {
+			column += current - start
+		}
 
 		potential_assign_op: bool
 
@@ -214,7 +217,7 @@ tokenize :: proc(
 			}
 		case '&', '|', '%':
 			potential_assign_op = true
-			token.kind = Token_Kind(char)
+			token.kind          = Token_Kind(char)
 			if current < len(source) && source[current] == char {
 				current += 1
 				#partial switch token.kind {
@@ -228,12 +231,49 @@ tokenize :: proc(
 			}
 		case '+', '*', '^', '~':
 			potential_assign_op = true
-			token.kind = Token_Kind(char)
+			token.kind          = Token_Kind(char)
 		case '/':
 			if current < len(source) && source[current] == '/' {
 				for current < len(source) && source[current] != '\n' {
 					current += 1
 				}
+				token.kind = .Comment
+				if !comments {
+					continue
+				}
+			} else if current < len(source) && source[current] == '*' {
+				column    += 2 // manual correction for the two consumed characters
+				current   += 1
+				set_column = false
+
+				depth := 1
+				for current + 1 < len(source) && depth != 0 {
+					if source[current] == '\n' {
+						line   += 1
+						column  = 1
+					} else {
+						column += 1
+					}
+					if source[current] == '*' && source[current + 1] == '/' {
+						depth   -= 1
+						current += 1
+						column  += 1
+					} else if source[current] == '/' && source[current + 1] == '*' {
+						depth   += 1
+						current += 1
+						column  += 1
+					}
+
+					current += 1
+				}
+
+				if current >= len(source) - 1 {
+					append(&errors, Error {
+						location = token.location,
+						message  = fmt.tprintf("unterminated multi-line comment"),
+					})
+				}
+
 				token.kind = .Comment
 				if !comments {
 					continue
@@ -256,7 +296,7 @@ tokenize :: proc(
 				if current == len(source) {
 					append(&errors, Error {
 						location = token.location,
-						message  = fmt.tprintf("Expected < or = after .., got EOF"),
+						message  = fmt.tprintf("expected < or = after .., got EOF"),
 					})
 					break
 				}
@@ -270,7 +310,7 @@ tokenize :: proc(
 				case:
 					append(&errors, Error {
 						location = token.location,
-						message  = fmt.tprintf("Expected < or = after .., got '%c'", source[current]),
+						message  = fmt.tprintf("expected < or = after .., got '%c'", source[current]),
 					})
 				}
 			} else {
@@ -342,7 +382,7 @@ tokenize :: proc(
 				} else {
 					append(&errors, Error {
 						location = token.location,
-						message  = fmt.tprintf("Failed to parse float literal: '%s'", source[start:current]),
+						message  = fmt.tprintf("failed to parse float literal: '%s'", source[start:current]),
 					})
 				}
 			} else {
@@ -353,7 +393,7 @@ tokenize :: proc(
 				} else {
 					append(&errors, Error {
 						location = token.location,
-						message  = fmt.tprintf("Failed to parse integer literal: '%s'", source[start:current]),
+						message  = fmt.tprintf("failed to parse integer literal: '%s'", source[start:current]),
 					})
 				}
 			}
@@ -387,7 +427,7 @@ tokenize :: proc(
 		case:
 			append(&errors, Error {
 				location = token.location,
-				message  = fmt.tprintf("Unexecpected character: '%c'", char),
+				message  = fmt.tprintf("unexecpected character: '%c'", char),
 			})
 			continue
 		}

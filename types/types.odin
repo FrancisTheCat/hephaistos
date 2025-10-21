@@ -241,7 +241,7 @@ equal :: proc(a, b: ^Type) -> bool {
 }
 
 implicity_castable :: proc(from, to: ^Type) -> bool {
-	
+	return false
 }
 
 @(require_results)
