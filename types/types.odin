@@ -240,6 +240,10 @@ equal :: proc(a, b: ^Type) -> bool {
 	return true
 }
 
+implicity_castable :: proc(from, to: ^Type) -> bool {
+	
+}
+
 @(require_results)
 op_result_type :: proc(a, b: ^Type) -> (result: ^Type) {
 	a := a

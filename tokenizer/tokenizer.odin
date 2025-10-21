@@ -29,6 +29,8 @@ Token_Kind :: enum u16 {
 	Less          = '<',
 	Greater       = '>',
 	Question_Mark = '?',
+	Attribute     = '@',
+	Directive     = '#',
 
 	// avoid enum value collision
 	Ident = 128,
@@ -39,6 +41,9 @@ Token_Kind :: enum u16 {
 	Arrow, // ->
 
 	EOF,
+
+	Range_Equal,
+	Range_Less,
 
 	Equal,
 	Not_Equal,
@@ -61,6 +66,7 @@ Token_Kind :: enum u16 {
 	Switch,
 	Case,
 	Fallthrough,
+	In,
 
 	Uniform,
 
@@ -83,6 +89,7 @@ keyword_strings := map[string]Token_Kind{
 	"switch"      = .Switch,
 	"case"        = .Case,
 	"fallthrough" = .Fallthrough,
+	"in"          = .In,
 
 	"uniform"     = .Uniform,
 
@@ -243,9 +250,36 @@ tokenize :: proc(
 				potential_assign_op = true
 				token.kind = Token_Kind(char)
 			}
-
-		case ':', ';', '(', ')', '{', '}', '[', ']', '.', ',', '?':
+		case '.':
+			if current < len(source) && source[current] == '.' {
+				current += 1
+				if current == len(source) {
+					append(&errors, Error {
+						location = token.location,
+						message  = fmt.tprintf("Expected < or = after .., got EOF"),
+					})
+					break
+				}
+				switch source[current] {
+				case '<':
+					token.kind = .Range_Less
+					current   += 1
+				case '=':
+					token.kind = .Range_Equal
+					current   += 1
+				case:
+					append(&errors, Error {
+						location = token.location,
+						message  = fmt.tprintf("Expected < or = after .., got '%c'", source[current]),
+					})
+				}
+			} else {
+				token.kind = Token_Kind(char)
+			}
+			
+		case ':', ';', '(', ')', '{', '}', '[', ']', ',', '?', '#', '@':
 			token.kind = Token_Kind(char)
+
 		case 'a' ..= 'z', 'A' ..= 'Z', '_':
 			for current < len(source) {
 				switch source[current] {
@@ -407,6 +441,8 @@ token_strings := #sparse[Token_Kind]string {
 	.Less           = "<",
 	.Greater        = ">",
 	.Question_Mark  = "?",
+	.Attribute      = "@",
+	.Directive      = "#",
 
 	.Ident   = "identifier",
 
@@ -414,6 +450,9 @@ token_strings := #sparse[Token_Kind]string {
 	.Literal = "literal",
 
 	.Arrow = "arrow",
+
+	.Range_Equal = "..=",
+	.Range_Less  = "..<",
 
 	.EOF = "EOF",
 
@@ -436,6 +475,7 @@ token_strings := #sparse[Token_Kind]string {
 	.Switch      = "switch",
 	.Case        = "case",
 	.Fallthrough = "fallthrough",
+	.In          = "in",
 
 	.Uniform     = "uniform",
 

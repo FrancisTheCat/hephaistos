@@ -389,7 +389,7 @@ parse_expr_list :: proc(parser: ^Parser) -> (exprs: []^ast.Expr, ok: bool) {
 	return es[:], true
 }
 
-parse_simple_stmt :: proc(parser: ^Parser) -> (stmt: ^ast.Stmt, ok: bool) {
+parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stmt: ^ast.Stmt, ok: bool) {
 	token := token_peek(parser)
 	#partial switch token.kind {
 	case .Literal:
@@ -414,9 +414,10 @@ parse_simple_stmt :: proc(parser: ^Parser) -> (stmt: ^ast.Stmt, ok: bool) {
 				mutable     := token_advance(parser).kind == .Assign
 				values      := parse_expr_list(parser) or_return
 				decl        := ast.new(ast.Decl_Value, token.location, parser.end_location)
-				decl.lhs     = lhs
-				decl.values  = values
-				decl.mutable = mutable
+				decl.lhs        = lhs
+				decl.values     = values
+				decl.mutable    = mutable
+				decl.attributes = attributes
 				return decl, true
 			} else {
 				type := parse_expr(parser) or_return
@@ -514,11 +515,68 @@ parse_simple_stmt :: proc(parser: ^Parser) -> (stmt: ^ast.Stmt, ok: bool) {
 	return
 }
 
-parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}) -> (stmt: ^ast.Stmt, ok: bool) {
+parse_attributes :: proc(parser: ^Parser) -> (_attributes: []ast.Field, ok: bool) {
+	token_expect(parser, .Attribute)
+	attributes := make([dynamic]ast.Field)
+
+	parse_attr_list :: proc(parser: ^Parser, attributes: ^[dynamic]ast.Field) -> bool {
+		loop: for {
+			#partial switch token_peek(parser).kind {
+			case .Close_Paren, .EOF:
+				break loop
+			}
+
+			ident := token_expect(parser, .Ident) or_return
+
+			value: ^ast.Expr
+			if token_peek(parser).kind == .Assign {
+				token_advance(parser)
+				value = parse_expr(parser) or_return
+			}
+
+			append(attributes, ast.Field {
+				ident = ident,
+				value = value,
+			})
+
+			if token_peek(parser).kind == .Comma {
+				token_advance(parser)
+			} else {
+				break
+			}
+		}
+
+		token_expect(parser, .Close_Paren)
+		return true
+	}
+
+	#partial switch token := token_peek(parser); token.kind {
+	case .Ident:
+		append(&attributes, ast.Field {
+			ident = token,
+		})
+		return attributes[:], true
+	case .Open_Paren:
+		token_advance(parser)
+		defer if token_peek(parser).kind == .Semicolon do token_advance(parser)
+		parse_attr_list(parser, &attributes) or_return
+		return attributes[:], true
+	case:
+		error(parser, token, "expected identifier or '(', got '%s'", token.text)
+	}
+	return
+}
+
+parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []ast.Field = {}) -> (stmt: ^ast.Stmt, ok: bool) {
 	token := token_peek(parser)
 	#partial switch token.kind {
+	case .Attribute:
+		if len(attributes) != 0 {
+			error(parser, token, "only on set of attributes can be applied to a statement")
+		}
+		return parse_stmt(parser, label, parse_attributes(parser) or_return)
 	case .Return, .Continue, .Break, .Literal, .Open_Paren, .Cast:
-		return parse_simple_stmt(parser)
+		return parse_simple_stmt(parser, attributes)
 	case .Ident:
 		if token_peek(parser, 1).kind == .Colon {
 			#partial switch token_peek(parser, 2).kind {
@@ -528,7 +586,7 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}) -> (stmt: ^ast.
 				return parse_stmt(parser, token)
 			}
 		}
-		return parse_simple_stmt(parser)
+		return parse_simple_stmt(parser, attributes)
 	case .For:
 		token_advance(parser)
 		init: ^ast.Stmt

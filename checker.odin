@@ -378,7 +378,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			}
 		}
 		for &values, i in values {
-			values = check_expr_or_type(checker, v.values[i])
+			values = check_expr_or_type(checker, v.values[i], stmt.attributes)
 		}
 
 		v.types = make([]^types.Type, len(v.lhs))
@@ -716,7 +716,7 @@ check_proc_type :: proc(checker: ^Checker, p: $T) -> ^types.Proc {
 	return t
 }
 
-check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr) -> (operand: Operand) {
+check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field) -> (operand: Operand) {
 	operand.expr = expr
 
 	defer {
@@ -794,6 +794,36 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr) -> (operand: Ope
 		}
 
 	case ^ast.Expr_Proc_Lit:
+		shader_kind: ast.Shader_Kind
+		for attribute in attributes {
+			s: ast.Shader_Kind
+			switch attribute.ident.text {
+			case "vertex_shader":
+				s = .Vertex 
+			case "fragment_shader":
+				s = .Fragment 
+			case "geometry_shader":
+				s = .Geometry 
+			case "tesselation_shader":
+				s = .Tesselation 
+			case "compute_shader":
+				s = .Compute 
+			case:
+				error(checker, attribute.ident, "unknown attribute: '%s'", attribute.ident.text)
+			}
+			if shader_kind != nil && s != nil {
+				error(
+					checker,
+					attribute.ident,
+					"the attributes %s and %s are mutually exclusive",
+					ast.shader_kind_names[shader_kind],
+					ast.shader_kind_names[s],
+				)
+			}
+			shader_kind = s
+		}
+		v.shader_kind = shader_kind
+
 		type := check_proc_type(checker, v)
 
 		operand.type = type
@@ -1027,8 +1057,8 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr) -> (operand: Ope
 	return
 }
 
-check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr) -> (operand: Operand) {
-	operand = check_expr_internal(checker, expr)
+check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}) -> (operand: Operand) {
+	operand = check_expr_internal(checker, expr, attributes)
 	switch operand.mode {
 	case .RValue, .LValue, .Const, .Type:
 		return
@@ -1045,8 +1075,8 @@ check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr) -> (operand: Oper
 	return
 }
 
-check_expr :: proc(checker: ^Checker, expr: ^ast.Expr) -> (operand: Operand) {
-	operand = check_expr_internal(checker, expr)
+check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}) -> (operand: Operand) {
+	operand = check_expr_internal(checker, expr, attributes)
 	switch operand.mode {
 	case .RValue, .LValue, .Const:
 		return
@@ -1064,8 +1094,8 @@ check_expr :: proc(checker: ^Checker, expr: ^ast.Expr) -> (operand: Operand) {
 	return
 }
 
-check_type :: proc(checker: ^Checker, expr: ^ast.Expr) -> ^types.Type {
-	operand := check_expr_internal(checker, expr)
+check_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}) -> ^types.Type {
+	operand := check_expr_internal(checker, expr, attributes)
 	switch operand.mode {
 	case .RValue, .LValue, .Const:
 		error(checker, operand, "expected a type, got expression")

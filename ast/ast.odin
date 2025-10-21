@@ -22,6 +22,7 @@ Expr :: struct {
 
 Stmt :: struct {
 	using stmt_base: Node,
+	attributes:      []Field,
 	derived_stmt:    Any_Stmt,
 }
 
@@ -59,11 +60,29 @@ Expr_Ident :: struct {
 	ident:      tokenizer.Token,
 }
 
+Shader_Kind :: enum {
+	Vertex = 1,
+	Fragment,
+	Geometry,
+	Tesselation,
+	Compute,
+}
+
+@(rodata)
+shader_kind_names: [Shader_Kind]string = {
+	.Vertex      = "vertex_shader",
+	.Fragment    = "fragment_shader",
+	.Geometry    = "geometry_shader",
+	.Tesselation = "tesselation_shader",
+	.Compute     = "compute_shader",
+}
+
 Expr_Proc_Lit :: struct {
-	using node: Expr,
-	args:       []Field,
-	returns:    []Field,
-	body:       []^Stmt,
+	using node:  Expr,
+	args:        []Field,
+	returns:     []Field,
+	body:        []^Stmt,
+	shader_kind: Shader_Kind,
 }
 
 Expr_Proc_Sig :: struct {
