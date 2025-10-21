@@ -617,7 +617,19 @@ _cg_expr_binary :: proc(
 	case .Matrix:
 		unimplemented()
 	case .Vector:
-		if lhs_type.kind == .Vector && lhs_type.kind == .Vector {
+		if lhs_type.kind == .Vector && rhs_type.kind == .Vector {
+			#partial switch op {
+			case .Add:
+				return spv.OpFAdd(builder, type_info.type, lhs_value, rhs_value)
+			case .Subtract:
+				return spv.OpFSub(builder, type_info.type, lhs_value, rhs_value)
+			case .Multiply:
+				return spv.OpFMul(builder, type_info.type, lhs_value, rhs_value)
+			case .Divide:
+				return spv.OpFDiv(builder, type_info.type, lhs_value, rhs_value)
+			case .Modulo:
+				return spv.OpFMod(builder, type_info.type, lhs_value, rhs_value)
+			}
 			panic("")
 		}
 
@@ -629,15 +641,15 @@ _cg_expr_binary :: proc(
 
 		#partial switch op {
 		case .Add:
-			return spv.OpFAdd(builder, type_info.type, lhs_value, rhs_value)
+			// return spv.OpFAdd(builder, type_info.type, lhs_value, rhs_value)
 		case .Subtract:
-			return spv.OpFSub(builder, type_info.type, lhs_value, rhs_value)
+			// return spv.OpFSub(builder, type_info.type, lhs_value, rhs_value)
 		case .Multiply:
-			return spv.OpFMul(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpVectorTimesScalar(builder, type_info.type, lhs_value, rhs_value)
 		case .Divide:
-			return spv.OpFDiv(builder, type_info.type, lhs_value, rhs_value)
+			// return spv.OpFDiv(builder, type_info.type, lhs_value, rhs_value)
 		case .Modulo:
-			return spv.OpFMod(builder, type_info.type, lhs_value, rhs_value)
+			// return spv.OpFMod(builder, type_info.type, lhs_value, rhs_value)
 		}
 
 	case:
@@ -752,8 +764,7 @@ cg_expr :: proc(
 		panic("")
 	}
 
-	if true do fmt.panicf("unimplemented: %v", reflect.union_variant_typeid(expr.derived_expr))
-	return {}
+	fmt.panicf("unimplemented: %v", reflect.union_variant_typeid(expr.derived_expr))
 }
 
 // @(require_results)
