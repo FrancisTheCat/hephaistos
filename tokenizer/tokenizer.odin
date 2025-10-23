@@ -68,7 +68,7 @@ Token_Kind :: enum u16 {
 	Fallthrough,
 	In,
 
-	Uniform,
+	// Uniform,
 
 	Struct,
 	Enum,
@@ -91,7 +91,7 @@ keyword_strings := map[string]Token_Kind{
 	"fallthrough" = .Fallthrough,
 	"in"          = .In,
 
-	"uniform"     = .Uniform,
+	// "uniform"     = .Uniform,
 
 	"struct"      = .Struct,
 	"enum"        = .Enum,
@@ -517,7 +517,7 @@ token_strings := #sparse[Token_Kind]string {
 	.Fallthrough = "fallthrough",
 	.In          = "in",
 
-	.Uniform     = "uniform",
+	// .Uniform     = "uniform",
 
 	.Struct      = "struct",
 	.Enum        = "enum",

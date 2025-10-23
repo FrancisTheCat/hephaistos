@@ -425,16 +425,18 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 					mutable       := token_advance(parser).kind == .Assign
 					values        := parse_expr_list(parser) or_return
 					decl          := ast.new(ast.Decl_Value, token.location, parser.end_location)
-					decl.lhs       = lhs
-					decl.values    = values
-					decl.mutable   = mutable
-					decl.type_expr = type
+					decl.lhs        = lhs
+					decl.values     = values
+					decl.mutable    = mutable
+					decl.type_expr  = type
+					decl.attributes = attributes
 					return decl, true
 				} else {
-					decl          := ast.new(ast.Decl_Value, token.location, parser.end_location)
-					decl.lhs       = lhs
-					decl.mutable   = true
-					decl.type_expr = type
+					decl           := ast.new(ast.Decl_Value, token.location, parser.end_location)
+					decl.lhs        = lhs
+					decl.mutable    = true
+					decl.type_expr  = type
+					decl.attributes = attributes
 					return decl, true
 				}
 			}

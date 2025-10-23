@@ -1,7 +1,5 @@
 package hephaistos
 
-import "base:intrinsics"
-
 import "core:fmt"
 import "core:reflect"
 import "core:slice"
@@ -12,7 +10,8 @@ import "tokenizer"
 
 import spv "spirv-odin"
 
-VOID :: 1
+VOID      :: 1
+VOID_PROC :: 2 // proc() -> ()
 
 CG_Storage_Class :: enum {
 	Global = 1,
@@ -37,25 +36,26 @@ Type_Hash_Entry :: struct {
 Type_Registry :: [][dynamic]Type_Hash_Entry
 
 CG_Context :: struct {
-	constant_cache:   map[types.Const_Value]spv.Id,
-	type_registry:    Type_Registry,
+	constant_cache:      map[types.Const_Value]struct{ id: spv.Id, type: ^types.Type, },
+	type_registry:       Type_Registry,
 
-	meta:             spv.Builder,
-	memory_model:     spv.Builder,
-	entry_points:     spv.Builder,
-	exectution_modes: spv.Builder,
-	debug_a:          spv.Builder,
-	debug_b:          spv.Builder,
-	annotations:      spv.Builder,
-	types:            spv.Builder,
-	globals:          spv.Builder,
-	functions:        spv.Builder,
+	meta:                spv.Builder,
+	memory_model:        spv.Builder,
+	entry_points:        spv.Builder,
+	exectution_modes:    spv.Builder,
+	debug_a:             spv.Builder,
+	debug_b:             spv.Builder,
+	annotations:         spv.Builder,
+	types:               spv.Builder,
+	globals:             spv.Builder,
+	functions:           spv.Builder,
 
-	current_id:       spv.Id,
-	checker:          ^Checker,
-	scopes:           [dynamic]CG_Scope,
+	current_id:          spv.Id,
+	checker:             ^Checker,
+	scopes:              [dynamic]CG_Scope,
 
-	capabilities:     map[spv.Capability]struct{},
+	capabilities:        map[spv.Capability]struct{},
+	referenced_uniforms: map[spv.Id]struct{},
 }
 
 CG_Entity :: struct {
@@ -66,6 +66,7 @@ CG_Entity :: struct {
 CG_Value :: struct {
 	id:            spv.Id,
 	storage_class: CG_Storage_Class,
+	type:         ^types.Type,
 }
 
 CG_Scope :: struct {
@@ -74,6 +75,7 @@ CG_Scope :: struct {
 	label_id:     spv.Id,
 	return_value: spv.Id,
 	return_type:  ^types.Type,
+	outputs:      []spv.Id,
 }
 
 cg_lookup_entity :: proc(ctx: ^CG_Context, name: string) -> ^CG_Entity {
@@ -151,7 +153,12 @@ cg_init :: proc(ctx: ^CG_Context, checker: ^Checker) {
 	cg_scope_push(ctx)
 
 	void := spv.OpTypeVoid(&ctx.types)
-	assert(void == 1)
+	assert(void == VOID)
+	void_proc := spv.OpTypeFunction(&ctx.types, void)
+	assert(void_proc == VOID_PROC)
+
+	spv.OpName(&ctx.debug_a, void,      "$VOID")
+	spv.OpName(&ctx.debug_a, void_proc, "$VOID_PROC")
 }
 
 register_type :: proc(registry: ^Type_Registry, t: ^types.Type) -> (type_info: ^CG_Type_Info, ok: bool) {
@@ -192,11 +199,18 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 
 	switch v in decl.derived_decl {
 	case ^ast.Decl_Value:
+		if v.uniform {
+			value_builder     = nil
+			decl_builder      = &ctx.globals
+			storage_class     = .Uniform
+			spv_storage_class = .Uniform
+		}
+
 		if v.mutable {
 			if len(v.values) == 0 {
 				for type, i in v.types {
 					type_info := cg_type(ctx, type)
-					id        := spv.OpVariable(decl_builder, type_info.ptr_types[storage_class], spv_storage_class, type_info.nil_value)
+					id        := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, cg_nil_value(ctx, type_info))
 					name      := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
 					cg_insert_entity(ctx, name, storage_class, type, id)
 				}
@@ -204,11 +218,13 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 				for value, i in v.values {
 					type      := v.types[i]
 					type_info := cg_type(ctx, type)
-					init      := type_info.nil_value
+					init: spv.Id
 					if global {
 						init = cg_expr(ctx, nil, value).id
+					} else {
+						init = cg_nil_value(ctx, type_info)
 					}
-					id := spv.OpVariable(decl_builder, type_info.ptr_types[storage_class], spv_storage_class, init)
+					id := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
 					if !global {
 						init := cg_expr(ctx, value_builder, value)
 						spv.OpStore(value_builder, id, init.id)
@@ -259,32 +275,39 @@ cg_generate :: proc(ctx: ^CG_Context, stmts: []^ast.Stmt) -> []u32 {
 }
 
 cg_constant :: proc(ctx: ^CG_Context, value: types.Const_Value) -> CG_Value {
-	if id, ok := ctx.constant_cache[value]; ok {
-		return { id = id, }
+	if cached, ok := ctx.constant_cache[value]; ok {
+		return {
+			id   = cached.id,
+			type = cached.type,
+		}
 	}
 
-	id: spv.Id
-	defer ctx.constant_cache[value] = id
+	id:    spv.Id
+	type: ^types.Type
+	defer ctx.constant_cache[value] = { id = id, type = type, }
 
 	switch v in value {
 	case i64:
-		ti := cg_type(ctx, types.t_i32) 
+		type = types.t_i32
+		ti  := cg_type(ctx, type)
 		if v == {} {
-			id = ti.nil_value
+			id = cg_nil_value(ctx, ti)
 			break
 		}
 		id = spv.OpConstant(&ctx.types, ti.type, u32(v))
 	case f64:
-		ti := cg_type(ctx, types.t_f32) 
+		type = types.t_f32
+		ti  := cg_type(ctx, type)
 		if v == {} {
-			id = ti.nil_value
+			id = cg_nil_value(ctx, ti)
 			break
 		}
 		id = spv.OpConstant(&ctx.types, ti.type, transmute(u32)f32(v))
 	case bool:
-		ti := cg_type(ctx, types.t_bool) 
+		type = types.t_bool
+		ti  := cg_type(ctx, type)
 		if v == {} {
-			id = ti.nil_value
+			id = cg_nil_value(ctx, ti)
 			break
 		}
 		if v {
@@ -294,23 +317,67 @@ cg_constant :: proc(ctx: ^CG_Context, value: types.Const_Value) -> CG_Value {
 		}
 	}
 
-	return { id = id, }
+	return { id = id, type = type, }
 }
 
-cg_type :: proc(ctx: ^CG_Context, type: ^types.Type) -> CG_Type_Info {
+cg_nil_value :: proc {
+	cg_nil_value_from_type,
+	cg_nil_value_from_type_info,
+}
+
+@(require_results)
+cg_nil_value_from_type :: proc(ctx: ^CG_Context, type_info: ^CG_Type_Info) -> spv.Id {
+	if type_info.nil_value == 0 {
+		type_info.nil_value = spv.OpConstantNull(&ctx.types, type_info.type)
+	}
+	return type_info.nil_value
+}
+
+@(require_results)
+cg_nil_value_from_type_info :: proc(ctx: ^CG_Context, type: ^types.Type) -> spv.Id {
+	return cg_nil_value_from_type(ctx, cg_type(ctx, type))
+}
+
+cg_type_ptr :: proc {
+	cg_type_ptr_from_type,
+	cg_type_ptr_from_type_info,
+}
+
+@(require_results)
+cg_type_ptr_from_type :: proc(ctx: ^CG_Context, type_info: ^CG_Type_Info, storage_class: CG_Storage_Class) -> spv.Id {
+	if type_info.ptr_types[storage_class] == 0 {
+		spv_storage_class: spv.StorageClass
+		switch storage_class {
+		case .Global:
+			spv_storage_class = .Private
+		case .Function:
+			spv_storage_class = .Function
+		case .Uniform:
+			spv_storage_class = .Uniform
+		case .Input:
+			spv_storage_class = .Input
+		case .Output:
+			spv_storage_class = .Output
+		}
+		type_info.ptr_types[storage_class] = spv.OpTypePointer(&ctx.types, spv_storage_class, type_info.type)
+	}
+	return type_info.ptr_types[storage_class]
+}
+
+@(require_results)
+cg_type_ptr_from_type_info :: proc(ctx: ^CG_Context, type: ^types.Type, storage_class: CG_Storage_Class) -> spv.Id {
+	return cg_type_ptr_from_type(ctx, cg_type(ctx, type), storage_class)
+}
+
+cg_type :: proc(ctx: ^CG_Context, type: ^types.Type) -> ^CG_Type_Info {
 	assert(type != nil)
 
 	registry := &ctx.type_registry
 	info, ok := register_type(registry, type)
 	if ok {
-		assert(info.type      != 0)
-		assert(info.nil_value != 0  || info.type == 1)
-		assert(info.ptr_types != {} || info.type == 1)
-
-		return info^
+		assert(info.type != 0)
+		return info
 	}
-
-	VOID :: 1
 
 	#partial switch type.kind {
 	case .Uint:
@@ -391,56 +458,90 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type) -> CG_Type_Info {
 		info.type = spv.OpTypeFunction(&ctx.types, cg_type(ctx, type_proc.return_type).type, ..args)
 	}
 
-	if info.type != VOID && type.kind != .Proc {
-		info.nil_value = spv.OpConstantNull(&ctx.types, info.type)
-		info.ptr_types = {
-			.Global   = spv.OpTypePointer(&ctx.types, .Private,  info.type),
-			.Function = spv.OpTypePointer(&ctx.types, .Function, info.type),
-			.Uniform  = spv.OpTypePointer(&ctx.types, .Uniform,  info.type),
-			.Input    = spv.OpTypePointer(&ctx.types, .Input,    info.type),
-			.Output   = spv.OpTypePointer(&ctx.types, .Output,   info.type),
-		}
-	}
-
-	return info^
+	return info
 }
 
 cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
-	return { id = _cg_proc_lit(ctx, p), }
-}
-
-_cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> (id: spv.Id) {
 	type             := p.type.variant.(^types.Proc)
 	return_type_info := cg_type(ctx, type.return_type)
-	id                = spv.OpFunction(&ctx.functions, return_type_info.type, {}, cg_type(ctx, type).type)
+	proc_type_id     := cg_type(ctx, type).type
+	return_type_id   := return_type_info.type
+	if p.shader_kind != nil {
+		proc_type_id   = VOID_PROC
+		return_type_id = VOID
+	}
+	id := spv.OpFunction(&ctx.functions, return_type_id, {}, proc_type_id)
 
 	scope := cg_scope_push(ctx)
 	defer cg_scope_pop(ctx)
 
-	for arg, i in type.args {
-		id := spv.OpFunctionParameter(&ctx.functions, cg_type(ctx, arg.type).type)
-		cg_insert_entity(ctx, p.args[i].ident.text, nil, arg.type, id)
-	}
-	spv.OpLabel(&ctx.functions)
-	body := spv.Builder { current_id = &ctx.current_id, }
 	return_value: spv.Id
-	if len(type.returns) != 0 {
-		return_value = spv.OpVariable(&ctx.functions, return_type_info.ptr_types[.Function], .Function, return_type_info.nil_value)
-		spv.OpName(&ctx.debug_a, return_value, "$return_tuple")
-		for ret, i in type.returns {
-			type_info := cg_type(ctx, ret.type)
-			id        := spv.OpAccessChain(&ctx.functions, type_info.ptr_types[.Function], return_value, cg_constant(ctx, i64(i)).id)
-			name      := ret.name.text
-			if ret.value != nil {
-				init := cg_constant(ctx, ret.value)
-				spv.OpStore(&body, id, init.id)
+	body := spv.Builder { current_id = &ctx.current_id, }
+
+	outputs:   [dynamic]spv.Id
+	interface: [dynamic]spv.Id
+	if p.shader_kind != nil {
+		for arg, i in type.args {
+			id := spv.OpVariable(&ctx.globals, cg_type_ptr(ctx, arg.type, .Input), .Input, nil)
+			cg_insert_entity(ctx, p.args[i].ident.text, .Input, arg.type, id)
+			append(&interface, id)
+			spv.OpDecorate(&ctx.annotations, id, .Location, u32(i))
+		}
+		spv.OpLabel(&ctx.functions)
+		if len(type.returns) != 0 {
+			for ret, i in type.returns {
+				type_info := cg_type(ctx, ret.type)
+				id        := spv.OpVariable(&ctx.globals, cg_type_ptr(ctx, type_info, .Output), .Output, nil)
+				name      := ret.name.text
+				if ret.value != nil {
+					init := cg_constant(ctx, ret.value)
+					spv.OpStore(&body, id, init.id)
+				}
+				cg_insert_entity(ctx, name, .Output, ret.type, id)
+				append(&interface, id)
+				append(&outputs,   id)
+				spv.OpDecorate(&ctx.annotations, id, .Location, u32(i))
 			}
-			cg_insert_entity(ctx, name, .Function, ret.type, id)
+		}
+	} else {
+		for arg, i in type.args {
+			id := spv.OpFunctionParameter(&ctx.functions, cg_type(ctx, arg.type).type)
+			cg_insert_entity(ctx, p.args[i].ident.text, nil, arg.type, id)
+		}
+		spv.OpLabel(&ctx.functions)
+		return_value: spv.Id
+		if len(type.returns) != 0 {
+			return_value = spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, return_type_info, .Function), .Function, cg_nil_value(ctx, return_type_info))
+			spv.OpName(&ctx.debug_a, return_value, "$return_tuple")
+			for ret, i in type.returns {
+				type_info := cg_type(ctx, ret.type)
+				id        := spv.OpAccessChain(&ctx.functions, cg_type_ptr(ctx, type_info, .Function), return_value, cg_constant(ctx, i64(i)).id)
+				name      := ret.name.text
+				if ret.value != nil {
+					init := cg_constant(ctx, ret.value)
+					spv.OpStore(&body, id, init.id)
+				}
+				cg_insert_entity(ctx, name, .Function, ret.type, id)
+			}
 		}
 	}
 
 	scope.return_value = return_value
 	scope.return_type  = type.return_type
+	scope.outputs      = outputs[:]
+
+	returned := cg_stmt_list(ctx, &body, p.body)
+	if !returned {
+		if len(type.returns) != 0 {
+			value := spv.OpLoad(&body, return_type_info.type, return_value)
+			spv.OpReturnValue(&body, value)
+		} else {
+			spv.OpReturn(&body)
+		}
+	}
+
+	append(&ctx.functions.data, ..body.data[:])
+	spv.OpFunctionEnd(&ctx.functions)
 
 	if p.shader_kind != nil {
 		execution_mode: spv.ExecutionModel
@@ -456,22 +557,26 @@ _cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> (id: spv.Id) {
 		case .Compute:
 			execution_mode = .Kernel
 		}
-		spv.OpEntryPoint(&ctx.entry_points, execution_mode, id, "main")
-	}
-
-	returned := cg_stmt_list(ctx, &body, p.body)
-	if !returned {
-		if len(type.returns) != 0 {
-			value := spv.OpLoad(&body, return_type_info.type, return_value)
-			spv.OpReturnValue(&body, value)
-		} else {
-			spv.OpReturn(&body)
+		reserve(&interface, len(interface) + len(ctx.referenced_uniforms))
+		for u in ctx.referenced_uniforms {
+			append(&interface, u)
+		}
+		clear(&ctx.referenced_uniforms)
+		spv.OpEntryPoint(&ctx.entry_points, execution_mode, id, "$entry_point", ..interface[:])
+		if p.shader_kind == .Fragment {
+			spv.OpExecutionMode(&ctx.entry_points, id, .OriginUpperLeft)
 		}
 	}
-	append(&ctx.functions.data, ..body.data[:])
-	spv.OpFunctionEnd(&ctx.functions)
 
-	return
+	return { id = id, }
+}
+
+cg_deref :: proc(ctx: ^CG_Context, builder: ^spv.Builder, value: CG_Value) -> spv.Id {
+	if value.storage_class == nil {
+		return value.id
+	}
+
+	return spv.OpLoad(builder, cg_type(ctx, value.type).type, value.id)
 }
 
 @(require_results)
@@ -482,29 +587,9 @@ cg_expr_binary :: proc(
 	lhs_value, rhs_value: CG_Value,
 	lhs_type,  rhs_type:  ^types.Type,
 	type:                 ^types.Type,
-) -> (value: CG_Value) {
-	value.id = _cg_expr_binary(
-		ctx,
-		builder,
-		op,
-		lhs_value.id,
-		rhs_value.id,
-		lhs_type,
-		rhs_type,
-		type,
-	)
-	return
-}
-
-@(require_results)
-_cg_expr_binary :: proc(
-	ctx:                  ^CG_Context,
-	builder:              ^spv.Builder,
-	op:                   tokenizer.Token_Kind,
-	lhs_value, rhs_value: spv.Id,
-	lhs_type,  rhs_type:  ^types.Type,
-	type:                 ^types.Type,
 ) -> spv.Id {
+	lhs       := cg_deref(ctx, builder, lhs_value)
+	rhs       := cg_deref(ctx, builder, rhs_value)
 	type_info := cg_type(ctx, type)
 
 	if op_is_relation(op) {
@@ -513,54 +598,54 @@ _cg_expr_binary :: proc(
 		case .Int:
 			#partial switch op {
 			case .Equal:
-				return spv.OpIEqual(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpIEqual(builder, type_info.type, lhs, rhs)
 			case .Not_Equal:
-				return spv.OpINotEqual(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpINotEqual(builder, type_info.type, lhs, rhs)
 			case .Less:
-				return spv.OpSLessThan(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpSLessThan(builder, type_info.type, lhs, rhs)
 			case .Less_Equal:
-				return spv.OpSLessThanEqual(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpSLessThanEqual(builder, type_info.type, lhs, rhs)
 			case .Greater:
-				return spv.OpSGreaterThan(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpSGreaterThan(builder, type_info.type, lhs, rhs)
 			case .Greater_Equal:
-				return spv.OpSGreaterThanEqual(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpSGreaterThanEqual(builder, type_info.type, lhs, rhs)
 			}
 		case .Uint:
 			#partial switch op {
 			case .Equal:
-				return spv.OpIEqual(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpIEqual(builder, type_info.type, lhs, rhs)
 			case .Not_Equal:
-				return spv.OpINotEqual(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpINotEqual(builder, type_info.type, lhs, rhs)
 			case .Less:
-				return spv.OpULessThan(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpULessThan(builder, type_info.type, lhs, rhs)
 			case .Less_Equal:
-				return spv.OpULessThanEqual(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpULessThanEqual(builder, type_info.type, lhs, rhs)
 			case .Greater:
-				return spv.OpUGreaterThan(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpUGreaterThan(builder, type_info.type, lhs, rhs)
 			case .Greater_Equal:
-				return spv.OpUGreaterThanEqual(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpUGreaterThanEqual(builder, type_info.type, lhs, rhs)
 			}
 		case .Float:
 			#partial switch op {
 			case .Equal:
-				return spv.OpFOrdEqual(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpFOrdEqual(builder, type_info.type, lhs, rhs)
 			case .Not_Equal:
-				return spv.OpFOrdNotEqual(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpFOrdNotEqual(builder, type_info.type, lhs, rhs)
 			case .Less:
-				return spv.OpFOrdLessThan(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpFOrdLessThan(builder, type_info.type, lhs, rhs)
 			case .Less_Equal:
-				return spv.OpFOrdLessThanEqual(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpFOrdLessThanEqual(builder, type_info.type, lhs, rhs)
 			case .Greater:
-				return spv.OpFOrdGreaterThan(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpFOrdGreaterThan(builder, type_info.type, lhs, rhs)
 			case .Greater_Equal:
-				return spv.OpFOrdGreaterThanEqual(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpFOrdGreaterThanEqual(builder, type_info.type, lhs, rhs)
 			}
 		case .Bool:
 			#partial switch op {
 			case .Equal:
-				return spv.OpLogicalEqual(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpLogicalEqual(builder, type_info.type, lhs, rhs)
 			case .Not_Equal:
-				return spv.OpLogicalNotEqual(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpLogicalNotEqual(builder, type_info.type, lhs, rhs)
 			}
 		}
 		panic("")
@@ -570,48 +655,48 @@ _cg_expr_binary :: proc(
 	case .Int:
 		#partial switch op {
 		case .Add:
-			return spv.OpIAdd(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpIAdd(builder, type_info.type, lhs, rhs)
 		case .Subtract:
-			return spv.OpISub(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpISub(builder, type_info.type, lhs, rhs)
 		case .Multiply:
-			return spv.OpIMul(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpIMul(builder, type_info.type, lhs, rhs)
 		case .Divide:
-			return spv.OpSDiv(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpSDiv(builder, type_info.type, lhs, rhs)
 		case .Modulo:
-			return spv.OpSMod(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpSMod(builder, type_info.type, lhs, rhs)
 		}
 	case .Uint:
 		#partial switch op {
 		case .Add:
-			return spv.OpIAdd(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpIAdd(builder, type_info.type, lhs, rhs)
 		case .Subtract:
-			return spv.OpISub(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpISub(builder, type_info.type, lhs, rhs)
 		case .Multiply:
-			return spv.OpIMul(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpIMul(builder, type_info.type, lhs, rhs)
 		case .Divide:
-			return spv.OpUDiv(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpUDiv(builder, type_info.type, lhs, rhs)
 		case .Modulo:
-			return spv.OpUMod(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpUMod(builder, type_info.type, lhs, rhs)
 		}
 	case .Float:
 		#partial switch op {
 		case .Add:
-			return spv.OpFAdd(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpFAdd(builder, type_info.type, lhs, rhs)
 		case .Subtract:
-			return spv.OpFSub(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpFSub(builder, type_info.type, lhs, rhs)
 		case .Multiply:
-			return spv.OpFMul(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpFMul(builder, type_info.type, lhs, rhs)
 		case .Divide:
-			return spv.OpFDiv(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpFDiv(builder, type_info.type, lhs, rhs)
 		case .Modulo:
-			return spv.OpFMod(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpFMod(builder, type_info.type, lhs, rhs)
 		}
 	case .Bool:
 		#partial switch op {
 		case .And:
-			return spv.OpLogicalAnd(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpLogicalAnd(builder, type_info.type, lhs, rhs)
 		case .Or:
-			return spv.OpLogicalAnd(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpLogicalAnd(builder, type_info.type, lhs, rhs)
 		}
 		unimplemented()
 	case .Matrix:
@@ -620,36 +705,36 @@ _cg_expr_binary :: proc(
 		if lhs_type.kind == .Vector && rhs_type.kind == .Vector {
 			#partial switch op {
 			case .Add:
-				return spv.OpFAdd(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpFAdd(builder, type_info.type, lhs, rhs)
 			case .Subtract:
-				return spv.OpFSub(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpFSub(builder, type_info.type, lhs, rhs)
 			case .Multiply:
-				return spv.OpFMul(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpFMul(builder, type_info.type, lhs, rhs)
 			case .Divide:
-				return spv.OpFDiv(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpFDiv(builder, type_info.type, lhs, rhs)
 			case .Modulo:
-				return spv.OpFMod(builder, type_info.type, lhs_value, rhs_value)
+				return spv.OpFMod(builder, type_info.type, lhs, rhs)
 			}
 			panic("")
 		}
 
-		lhs_value := lhs_value
-		rhs_value := rhs_value
+		lhs := lhs
+		rhs := rhs
 		if rhs_type.kind == .Vector {
-			lhs_value, rhs_value = rhs_value, lhs_value
+			lhs, rhs = rhs, lhs
 		}
 
 		#partial switch op {
 		case .Add:
-			// return spv.OpFAdd(builder, type_info.type, lhs_value, rhs_value)
+			// return spv.OpFAdd(builder, type_info.type, lhs, rhs)
 		case .Subtract:
-			// return spv.OpFSub(builder, type_info.type, lhs_value, rhs_value)
+			// return spv.OpFSub(builder, type_info.type, lhs, rhs)
 		case .Multiply:
-			return spv.OpVectorTimesScalar(builder, type_info.type, lhs_value, rhs_value)
+			return spv.OpVectorTimesScalar(builder, type_info.type, lhs, rhs)
 		case .Divide:
-			// return spv.OpFDiv(builder, type_info.type, lhs_value, rhs_value)
+			// return spv.OpFDiv(builder, type_info.type, lhs, rhs)
 		case .Modulo:
-			// return spv.OpFMod(builder, type_info.type, lhs_value, rhs_value)
+			// return spv.OpFMod(builder, type_info.type, lhs, rhs)
 		}
 
 	case:
@@ -664,8 +749,9 @@ cg_expr :: proc(
 	builder: ^spv.Builder,
 	expr:    ^ast.Expr,
 	deref:   bool = true,
-) -> CG_Value {
+) -> (value: CG_Value) {
 	assert(expr != nil)
+	defer value.type = expr.type
 
 	if expr.const_value != nil {
 		return cg_constant(ctx, expr.const_value)
@@ -685,17 +771,22 @@ cg_expr :: proc(
 		return cg_constant(ctx, expr.const_value)
 	case ^ast.Expr_Binary:
 		lhs, rhs := cg_expr(ctx, builder, v.lhs), cg_expr(ctx, builder, v.rhs)
-		return cg_expr_binary(ctx, builder, v.op, lhs, rhs, v.lhs.type, v.rhs.type, v.type)
+		value.id  = cg_expr_binary(ctx, builder, v.op, lhs, rhs, v.lhs.type, v.rhs.type, v.type)
+		return
 	case ^ast.Expr_Ident:
 		value := cg_lookup_entity(ctx, v.ident.text).value
 		if !deref {
 			assert(value.storage_class != nil)
 			return value
 		}
-		if value.storage_class != nil {
-			return { id = spv.OpLoad(builder, cg_type(ctx, v.type).type, value.id), }
-		} else {
+		#partial switch value.storage_class {
+		case nil:
 			return value
+		case .Uniform:
+			ctx.referenced_uniforms[value.id] = {}
+			fallthrough
+		case:
+			return { id = spv.OpLoad(builder, cg_type(ctx, v.type).type, value.id), }
 		}
 	case ^ast.Expr_Proc_Lit:
 		return cg_proc_lit(ctx, v)
@@ -717,7 +808,7 @@ cg_expr :: proc(
 		assert(field_index != -1)
 
 		type_info := cg_type(ctx, v.type)
-		ptr       := spv.OpAccessChain(builder, type_info.ptr_types[lhs.storage_class], lhs.id, cg_constant(ctx, i64(field_index)).id)
+		ptr       := spv.OpAccessChain(builder, cg_type_ptr(ctx, type_info, lhs.storage_class), lhs.id, cg_constant(ctx, i64(field_index)).id)
 
 		if deref {
 			return { id = spv.OpLoad(builder, type_info.type, ptr), }
@@ -741,17 +832,24 @@ cg_expr :: proc(
 
 			if len(proc_type.returns) == 1 {
 				type_info := cg_type(ctx, proc_type.returns[0].type)
-				copy      := spv.OpVariable(&ctx.functions, return_type_info.ptr_types[.Function], .Function)
+				copy      := spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, return_type_info, .Function), .Function)
 				spv.OpStore(builder, copy, ret)
-				ptr       := spv.OpAccessChain(builder, type_info.ptr_types[.Function], copy, cg_constant(ctx, i64(0)).id)
+				ptr       := spv.OpAccessChain(builder, cg_type_ptr(ctx, type_info, .Function), copy, cg_constant(ctx, i64(0)).id)
 				return { id = spv.OpLoad(builder, type_info.type, ptr), }
 			}
 			return { id = ret, }
 		}
 	case ^ast.Expr_Compound:
 	case ^ast.Expr_Index:
-		lhs := cg_expr(ctx, builder, v.lhs)
+		lhs := cg_expr(ctx, builder, v.lhs, deref)
 		rhs := cg_expr(ctx, builder, v.rhs)
+
+		if lhs.storage_class != nil {
+			return {
+				id            = spv.OpAccessChain(builder, cg_type_ptr(ctx, v.type, lhs.storage_class), lhs.id, rhs.id),
+				storage_class = lhs.storage_class,
+			}
+		}
 
 		return {
 			id            = spv.OpAccessChain(builder, cg_type(ctx, v.type).type, lhs.id, rhs.id),
@@ -764,41 +862,25 @@ cg_expr :: proc(
 		panic("")
 	}
 
-	fmt.panicf("unimplemented: %v", reflect.union_variant_typeid(expr.derived_expr))
+	if true do fmt.panicf("unimplemented: %v", reflect.union_variant_typeid(expr.derived_expr))
+	return {}
 }
 
-// @(require_results)
-// cg_scope :: proc(ctx: ^CG_Context, stmts: []^ast.Stmt, label: string = "") -> (instructions: []u32, returned: bool) {
-// 	cg_scope_push(ctx, label)
-// 	defer cg_scope_pop(ctx)
-
-// 	c := ctx.current
-// 	defer ctx.current = c
-
-// 	ctx.current.data       = make([dynamic]u32)
-// 	ctx.current.current_id = &ctx.current_id
-
-// 	returned     = cg_stmt_list(ctx, stmts)
-// 	instructions = ctx.current.data[:]
-// 	return
-// }
-
-cg_lookup_return_value :: proc(ctx: ^CG_Context) -> spv.Id {
-	#reverse for scope in ctx.scopes {
+cg_lookup_proc_scope :: proc(ctx: ^CG_Context) -> ^CG_Scope {
+	#reverse for &scope in ctx.scopes {
 		if scope.return_type != nil {
-			return scope.return_value
+			return &scope
 		}
 	}
 	panic("")
+}
+
+cg_lookup_return_value :: proc(ctx: ^CG_Context) -> spv.Id {
+	return cg_lookup_proc_scope(ctx).return_value
 }
 
 cg_lookup_return_type :: proc(ctx: ^CG_Context) -> ^types.Type {
-	#reverse for scope in ctx.scopes {
-		if scope.return_type != nil {
-			return scope.return_type
-		}
-	}
-	panic("")
+	return cg_lookup_proc_scope(ctx).return_type
 }
 
 cg_lookup_label :: proc(ctx: ^CG_Context, label: string) -> ^CG_Scope {
@@ -825,15 +907,26 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 				spv.OpReturn(builder)
 			}
 		} else {
-			return_value := cg_lookup_return_value(ctx)
-			type         := cg_lookup_return_type(ctx).variant.(^types.Struct)
-			return_ti    := cg_type(ctx, type)
-			for value, i in v.values {
-				v   := cg_expr(ctx, builder, value)
-				ptr := spv.OpAccessChain(builder, cg_type(ctx, type.fields[i].type).ptr_types[.Function], return_value, cg_constant(ctx, i64(i)).id)
-				spv.OpStore(builder, ptr, v.id)
+			proc_scope   := cg_lookup_proc_scope(ctx)
+			return_value := proc_scope.return_value
+			type         := proc_scope.return_type.variant.(^types.Struct)
+
+			if return_value == 0 {
+				for value, i in v.values {
+					v   := cg_expr(ctx, builder, value)
+					ptr := proc_scope.outputs[i]
+					spv.OpStore(builder, ptr, v.id)
+				}
+				spv.OpReturn(builder)
+			} else {
+				return_ti := cg_type(ctx, type)
+				for value, i in v.values {
+					v   := cg_expr(ctx, builder, value)
+					ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, type.fields[i].type, .Function), return_value, cg_constant(ctx, i64(i)).id)
+					spv.OpStore(builder, ptr, v.id)
+				}
+				spv.OpReturnValue(builder, spv.OpLoad(builder, return_ti.type, return_value))
 			}
-			spv.OpReturnValue(builder, spv.OpLoad(builder, return_ti.type, return_value))
 		}
 		return true
 	case ^ast.Stmt_Break:
@@ -932,13 +1025,13 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 				ctx,
 				builder,
 				v.op,
-				{ id = spv.OpLoad(builder, lhs_ti.type, lhs.id), },
+				{ id = spv.OpLoad(builder, lhs_ti.type, lhs.id), type = lhs.type, },
 				rhs,
 				v.lhs[lhs_i].type,
 				value.type,
 				v.lhs[lhs_i].type,
 			)
-			spv.OpStore(builder, lhs.id, value.id)
+			spv.OpStore(builder, lhs.id, value)
 		}
 	case ^ast.Stmt_Expr:
 		cg_expr(ctx, builder, v.expr)

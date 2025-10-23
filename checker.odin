@@ -370,6 +370,13 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		names  := make([]tokenizer.Token, len(v.lhs))
 		values := make([]Operand,         len(v.values))
 
+		for a in v.attributes {
+			switch a.ident.text {
+			case "uniform":
+				v.uniform = true
+			}
+		}
+
 		for &name, i in names {
 			if ident, ok := v.lhs[i].derived_expr.(^ast.Expr_Ident); ok {
 				name = ident.ident

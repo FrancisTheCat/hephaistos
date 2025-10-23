@@ -152,6 +152,7 @@ Decl_Value :: struct {
 	values:     []^Expr,
 	mutable:    bool,
 	types:      []^types.Type,
+	uniform:    bool,
 }
 
 Stmt_Return :: struct {
