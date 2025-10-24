@@ -146,13 +146,17 @@ Type_Matrix :: struct {
 
 
 Decl_Value :: struct {
-	using node: Decl,
-	lhs:        []^Expr,
-	type_expr:  ^Expr,
-	values:     []^Expr,
-	mutable:    bool,
-	types:      []^types.Type,
-	uniform:    bool,
+	using node:     Decl,
+	lhs:            []^Expr,
+	type_expr:      ^Expr,
+	values:         []^Expr,
+	mutable:        bool,
+	types:          []^types.Type,
+	uniform:        bool,
+	push_constant:  bool,
+	binding:        int,
+	descriptor_set: int,
+	link_name:      string,
 }
 
 Stmt_Return :: struct {
@@ -323,16 +327,4 @@ Field :: struct {
 	ident:  tokenizer.Token,
 	type:  ^Expr,
 	value: ^Expr,
-}
-
-A_Context, a_init, a_destroy :: struct {
-	data: []byte,
-}, proc(a: ^A_Context, n: int) {
-	a.data = make([]byte, n)
-}, proc(a: ^A_Context) {
-	delete(a.data)
-}
-
-File :: struct {
-	stmts: []Stmt,
 }

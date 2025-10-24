@@ -133,6 +133,7 @@ Token :: struct {
 		Int,
 		Float,
 		Op,
+		String,
 	},
 	imaginary: u8, // 'i', 'j' or 'k'
 }
@@ -319,6 +320,27 @@ tokenize :: proc(
 			
 		case ':', ';', '(', ')', '{', '}', '[', ']', ',', '?', '#', '@':
 			token.kind = Token_Kind(char)
+
+		case '"':
+			// TODO: maybe handle escaping
+			for current < len(source) && source[current] != '"' {
+				if source[current] == '\n' {
+					break
+				}
+				current += 1
+			}
+
+			if current <= len(source) && source[current] == '"' {
+				current += 1
+			} else {
+				append(&errors, Error {
+					location = token.location,
+					message  = fmt.tprintf("unterminated string literal"),
+				})
+			}
+
+			token.kind       = .Literal
+			token.value_kind = .String
 
 		case 'a' ..= 'z', 'A' ..= 'Z', '_':
 			for current < len(source) {

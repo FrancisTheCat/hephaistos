@@ -12,7 +12,6 @@ import "types"
 
 Checker :: struct {
 	scope:           ^Scope,
-	ast:             ast.File,
 	errors:          [dynamic]tokenizer.Error,
 	error_allocator: runtime.Allocator,
 }
@@ -199,7 +198,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		if v.label.text != "" {
 			_, ok := scope_lookup_label(checker, v.label.text)
 			if !ok {
-				error(checker, v, "unkown label: '%s'", v.label.text)
+				error(checker, v, "unknown label: '%s'", v.label.text)
 			}
 		} else {
 			_, ok := lookup_scope_by_kind(checker, { .Loop, .Switch, })
@@ -213,7 +212,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		if v.label.text != "" {
 			scope, ok := scope_lookup_label(checker, v.label.text)
 			if !ok {
-				error(checker, v, "unkown label: '%s'", v.label.text)
+				error(checker, v, "unknown label: '%s'", v.label.text)
 			}
 			if scope.kind != .Loop {
 				error(checker, v, "continue can only be used in loops")
@@ -370,11 +369,73 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		names  := make([]tokenizer.Token, len(v.lhs))
 		values := make([]Operand,         len(v.values))
 
+		seen := make(map[string]struct{})
 		for a in v.attributes {
+			if a.ident.text in seen {
+				error(checker, a.ident, "duplicate attribute: '%v'", a.ident.text)
+			}
+			seen[a.ident.text] = {}
+
 			switch a.ident.text {
 			case "uniform":
 				v.uniform = true
+				if a.value != nil {
+					error(checker, a.value, "'uniform' attribute does not accept a value")
+				}
+			case "push_constant":
+				v.push_constant = true
+				if a.value != nil {
+					error(checker, a.value, "'push_constant' attribute does not accept a value")
+				}
+			case "binding":
+				if a.value == nil {
+					error(checker, a.ident, "'binding' attribute requires a value")
+					break
+				}
+				value := check_expr(checker, a.value)
+				if val, ok := value.value.(i64); ok {
+					v.binding = int(val)
+				} else {
+					error(checker, value, "'binding' attribute value must be a constant integer")
+				}
+			case "descriptor_set":
+				if a.value == nil {
+					error(checker, a.ident, "'descriptor_set' attribute requires a value")
+					break
+				}
+				value := check_expr(checker, a.value)
+				if val, ok := value.value.(i64); ok {
+					v.descriptor_set = int(val)
+				} else {
+					error(checker, value, "'descriptor_set' attribute value must be a constant integer")
+				}
+			case "link_name":
+				if a.value == nil {
+					error(checker, a.ident, "'link_name' attribute requires a value")
+					break
+				}
+				value := check_expr(checker, a.value)
+				if val, ok := value.value.(string); ok {
+					v.link_name = val
+				} else {
+					error(checker, value, "'descriptor_set' attribute value must be a constant string")
+				}
+			case:
+				found: bool
+				for name in ast.shader_kind_names {
+					if name == a.ident.text {
+						found = true
+						break
+					}
+				}
+				if !found {
+					error(checker, a.ident, "unknown attribute '%s' in value declaration", a.ident.text)
+				}
 			}
+		}
+
+		if v.uniform && v.push_constant {
+			error(checker, v, "the 'push_constant' and 'uniform' attributes are mutually exclusive")
 		}
 
 		for &name, i in names {
@@ -745,6 +806,9 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		case bool:
 			operand.type  = types.t_bool
 			operand.value = val
+		case string:
+			operand.type  = types.t_invalid
+			operand.value = val
 		}
 		return
 
@@ -780,7 +844,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 	case ^ast.Expr_Ident:
 		e, ok := scope_lookup(checker, v.ident.text)
 		if !ok {
-			error(checker, expr, "unkown identifier: '%s'", v.ident.text)
+			error(checker, expr, "unknown identifier: '%s'", v.ident.text)
 			operand.type = types.t_invalid
 			operand.mode = .Invalid
 			return
@@ -804,21 +868,16 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		shader_kind: ast.Shader_Kind
 		for attribute in attributes {
 			s: ast.Shader_Kind
-			switch attribute.ident.text {
-			case "vertex_shader":
-				s = .Vertex 
-			case "fragment_shader":
-				s = .Fragment 
-			case "geometry_shader":
-				s = .Geometry 
-			case "tesselation_shader":
-				s = .Tesselation 
-			case "compute_shader":
-				s = .Compute 
-			case:
-				error(checker, attribute.ident, "unknown attribute: '%s'", attribute.ident.text)
+			for name, kind in ast.shader_kind_names {
+				if name == attribute.ident.text {
+					s = kind
+					break
+				}
 			}
-			if shader_kind != nil && s != nil {
+			if s == nil {
+				continue
+			}
+			if shader_kind != nil {
 				error(
 					checker,
 					attribute.ident,
@@ -862,6 +921,41 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		return check_expr(checker, v.expr)
 	case ^ast.Expr_Selector:
 		lhs := check_expr(checker, v.lhs)
+		if lhs.type.kind == .Vector {
+			for char in v.selector.text {
+				index: int = -1
+				switch char {
+				case 'r', 'x':
+					index = 0
+				case 'g', 'y':
+					index = 1
+				case 'b', 'z':
+					index = 2
+				case 'a', 'w':
+					index = 3
+				}
+				if index == -1 || index > lhs.type.variant.(^types.Vector).count {
+					error(checker, v, "can not swizzle vector of type %s with coordinate '%v'", lhs.type, char)
+				}
+			}
+
+			if len(v.selector.text) == 1 {
+				operand.type = lhs.type.variant.(^types.Vector).elem
+				operand.mode = lhs.mode
+				return
+			}
+
+			type      := types.type_new(.Vector, types.Vector)
+			type.count = len(v.selector.text)
+			type.elem  = lhs.type.variant.(^types.Vector).elem
+			type.size  = type.elem.size * type.count
+			type.align = type.elem.align
+
+			operand.type = type
+			operand.mode = lhs.mode
+			return
+		}
+
 		if lhs.type.kind != .Struct {
 			error(checker, v, "expression of type %v has no field called '%s'", lhs.type, v.selector.text)
 			return

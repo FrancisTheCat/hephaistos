@@ -18,6 +18,7 @@ Const_Value :: union {
 	i64,
 	f64,
 	bool,
+	string,
 }
 
 Struct :: struct {

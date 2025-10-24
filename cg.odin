@@ -36,26 +36,29 @@ Type_Hash_Entry :: struct {
 Type_Registry :: [][dynamic]Type_Hash_Entry
 
 CG_Context :: struct {
-	constant_cache:      map[types.Const_Value]struct{ id: spv.Id, type: ^types.Type, },
-	type_registry:       Type_Registry,
+	constant_cache:     map[types.Const_Value]struct{ id: spv.Id, type: ^types.Type, },
+	string_cache:       map[string]spv.Id,
+	type_registry:      Type_Registry,
 
-	meta:                spv.Builder,
-	memory_model:        spv.Builder,
-	entry_points:        spv.Builder,
-	exectution_modes:    spv.Builder,
-	debug_a:             spv.Builder,
-	debug_b:             spv.Builder,
-	annotations:         spv.Builder,
-	types:               spv.Builder,
-	globals:             spv.Builder,
-	functions:           spv.Builder,
+	meta:               spv.Builder,
+	memory_model:       spv.Builder,
+	entry_points:       spv.Builder,
+	exectution_modes:   spv.Builder,
+	debug_a:            spv.Builder,
+	debug_b:            spv.Builder,
+	annotations:        spv.Builder,
+	types:              spv.Builder,
+	globals:            spv.Builder,
+	functions:          spv.Builder,
 
-	current_id:          spv.Id,
-	checker:             ^Checker,
-	scopes:              [dynamic]CG_Scope,
+	current_id:         spv.Id,
+	checker:            ^Checker,
+	scopes:             [dynamic]CG_Scope,
 
-	capabilities:        map[spv.Capability]struct{},
-	referenced_uniforms: map[spv.Id]struct{},
+	capabilities:       map[spv.Capability]struct{},
+	referenced_globals: map[spv.Id]struct{},
+
+	link_name:          string,
 }
 
 CG_Entity :: struct {
@@ -89,7 +92,7 @@ cg_lookup_entity :: proc(ctx: ^CG_Context, name: string) -> ^CG_Entity {
 }
 
 cg_insert_entity :: proc(ctx: ^CG_Context, name: string, storage_class: CG_Storage_Class, type: ^types.Type, id: spv.Id) {
-	spv.OpName(&ctx.debug_a, id, name)
+	spv.OpName(&ctx.debug_b, id, name)
 	ctx.scopes[len(ctx.scopes) - 1].entities[name] = {
 		type  = type,
 		value = {
@@ -130,7 +133,7 @@ cg_scope :: proc(
 	return
 }
 
-cg_init :: proc(ctx: ^CG_Context, checker: ^Checker) {
+cg_init :: proc(ctx: ^CG_Context, checker: ^Checker, file_name: Maybe(string) = nil, file_source: Maybe(string) = nil) {
 	ctx.checker                     = checker
 	ctx.meta.current_id             = &ctx.current_id
 	ctx.memory_model.current_id     = &ctx.current_id
@@ -157,8 +160,12 @@ cg_init :: proc(ctx: ^CG_Context, checker: ^Checker) {
 	void_proc := spv.OpTypeFunction(&ctx.types, void)
 	assert(void_proc == VOID_PROC)
 
-	spv.OpName(&ctx.debug_a, void,      "$VOID")
-	spv.OpName(&ctx.debug_a, void_proc, "$VOID_PROC")
+	spv.OpName(&ctx.debug_b, void,      "$VOID")
+	spv.OpName(&ctx.debug_b, void_proc, "$VOID_PROC")
+
+	if file_name, ok := file_name.?; ok {
+		spv.OpSource(&ctx.debug_a, .Unknown, 0, cg_string(ctx, file_name), file_source)
+	}
 }
 
 register_type :: proc(registry: ^Type_Registry, t: ^types.Type) -> (type_info: ^CG_Type_Info, ok: bool) {
@@ -184,6 +191,15 @@ register_type :: proc(registry: ^Type_Registry, t: ^types.Type) -> (type_info: ^
 	return &entry[len(entry) - 1].info, false
 }
 
+cg_string :: proc(ctx: ^CG_Context, str: string) -> spv.Id {
+	if id, ok := ctx.string_cache[str]; ok {
+		return id
+	}
+	id := spv.OpString(&ctx.debug_a, str)
+	ctx.string_cache[str] = id
+	return id
+}
+
 cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global: bool) {
 	value_builder     := builder
 	decl_builder      := &ctx.functions
@@ -206,13 +222,31 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 			spv_storage_class = .Uniform
 		}
 
+		prev_link_name := ctx.link_name
+		if v.link_name != "" {
+			ctx.link_name = v.link_name
+		}
+		defer if v.link_name != "" {
+			ctx.link_name = prev_link_name
+		}
+
 		if v.mutable {
 			if len(v.values) == 0 {
 				for type, i in v.types {
 					type_info := cg_type(ctx, type)
-					id        := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, cg_nil_value(ctx, type_info))
-					name      := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
+					init: Maybe(spv.Id)
+					if !v.uniform {
+						init = cg_nil_value(ctx, type_info)
+					}
+					id   := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
+					name := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
 					cg_insert_entity(ctx, name, storage_class, type, id)
+
+					if v.uniform {
+						spv.OpDecorate(&ctx.annotations, type_info.type, .Block)
+						spv.OpDecorate(&ctx.annotations, id,             .Binding,       u32(v.binding))
+						spv.OpDecorate(&ctx.annotations, id,             .DescriptorSet, u32(v.descriptor_set))
+					}
 				}
 			} else {
 				for value, i in v.values {
@@ -238,8 +272,18 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 				if value.type.kind != .Proc {
 					continue
 				}
-				id   := cg_expr(ctx, nil, value)
+
 				name := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
+
+				prev_link_name := ctx.link_name
+				if v.link_name == "" {
+					ctx.link_name = name
+				}
+				defer if v.link_name == "" {
+					ctx.link_name = prev_link_name
+				}
+
+				id := cg_expr(ctx, nil, value)
 				cg_insert_entity(ctx, name, nil, value.type, id.id)
 			}
 		}
@@ -315,6 +359,8 @@ cg_constant :: proc(ctx: ^CG_Context, value: types.Const_Value) -> CG_Value {
 		} else {
 			id = spv.OpConstantFalse(&ctx.types, ti.type)
 		}
+	case string:
+		panic("")
 	}
 
 	return { id = id, type = type, }
@@ -434,7 +480,10 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type) -> ^CG_Type_Info {
 			}
 			info.type = spv.OpTypeStruct(&ctx.types, ..fields)
 			for f, i in type_struct.fields {
-				spv.OpMemberName(&ctx.debug_a, info.type, u32(i), f.name.text)
+				spv.OpMemberName(&ctx.debug_b, info.type, u32(i), f.name.text)
+				if type.kind == .Struct {
+					spv.OpMemberDecorate(&ctx.annotations, info.type, u32(i), .Offset, u32(f.offset))
+				}
 			}
 		} else {
 			info.type = VOID
@@ -512,7 +561,7 @@ cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
 		return_value: spv.Id
 		if len(type.returns) != 0 {
 			return_value = spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, return_type_info, .Function), .Function, cg_nil_value(ctx, return_type_info))
-			spv.OpName(&ctx.debug_a, return_value, "$return_tuple")
+			spv.OpName(&ctx.debug_b, return_value, "$return_tuple")
 			for ret, i in type.returns {
 				type_info := cg_type(ctx, ret.type)
 				id        := spv.OpAccessChain(&ctx.functions, cg_type_ptr(ctx, type_info, .Function), return_value, cg_constant(ctx, i64(i)).id)
@@ -557,12 +606,16 @@ cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
 		case .Compute:
 			execution_mode = .Kernel
 		}
-		reserve(&interface, len(interface) + len(ctx.referenced_uniforms))
-		for u in ctx.referenced_uniforms {
-			append(&interface, u)
+		reserve(&interface, len(interface) + len(ctx.referenced_globals))
+		for g in ctx.referenced_globals {
+			append(&interface, g)
 		}
-		clear(&ctx.referenced_uniforms)
-		spv.OpEntryPoint(&ctx.entry_points, execution_mode, id, "$entry_point", ..interface[:])
+		clear(&ctx.referenced_globals)
+		name := "$entry_point"
+		if len(ctx.link_name) != 0 {
+			name = ctx.link_name
+		}
+		spv.OpEntryPoint(&ctx.entry_points, execution_mode, id, name, ..interface[:])
 		if p.shader_kind == .Fragment {
 			spv.OpExecutionMode(&ctx.entry_points, id, .OriginUpperLeft)
 		}
@@ -585,11 +638,12 @@ cg_expr_binary :: proc(
 	builder:              ^spv.Builder,
 	op:                   tokenizer.Token_Kind,
 	lhs_value, rhs_value: CG_Value,
-	lhs_type,  rhs_type:  ^types.Type,
 	type:                 ^types.Type,
 ) -> spv.Id {
 	lhs       := cg_deref(ctx, builder, lhs_value)
 	rhs       := cg_deref(ctx, builder, rhs_value)
+	lhs_type  := lhs_value.type
+	rhs_type  := rhs_value.type
 	type_info := cg_type(ctx, type)
 
 	if op_is_relation(op) {
@@ -750,12 +804,28 @@ cg_expr :: proc(
 	expr:    ^ast.Expr,
 	deref:   bool = true,
 ) -> (value: CG_Value) {
-	assert(expr != nil)
-	defer value.type = expr.type
+	assert(expr      != nil)
+	assert(expr.type != nil)
+
+	// TODO: implicit broadcasting / scalar -> matrix conversions
+	value      = _cg_expr(ctx, builder, expr, deref)
+	value.type = expr.type
+	return
+}
+
+_cg_expr :: proc(
+	ctx:     ^CG_Context,
+	builder: ^spv.Builder,
+	expr:    ^ast.Expr,
+	deref:   bool,
+) -> (value: CG_Value) {
+	assert(expr      != nil)
+	assert(expr.type != nil)
 
 	if expr.const_value != nil {
 		return cg_constant(ctx, expr.const_value)
 	}
+
 	when ODIN_DEBUG {
 		start: int
 		if builder != nil {
@@ -771,50 +841,70 @@ cg_expr :: proc(
 		return cg_constant(ctx, expr.const_value)
 	case ^ast.Expr_Binary:
 		lhs, rhs := cg_expr(ctx, builder, v.lhs), cg_expr(ctx, builder, v.rhs)
-		value.id  = cg_expr_binary(ctx, builder, v.op, lhs, rhs, v.lhs.type, v.rhs.type, v.type)
+		value.id  = cg_expr_binary(ctx, builder, v.op, lhs, rhs, v.type)
 		return
 	case ^ast.Expr_Ident:
 		value := cg_lookup_entity(ctx, v.ident.text).value
+		if value.storage_class == .Uniform || value.storage_class == .Global {
+			ctx.referenced_globals[value.id] = {}
+		}
 		if !deref {
 			assert(value.storage_class != nil)
 			return value
 		}
-		#partial switch value.storage_class {
-		case nil:
+		if value.storage_class == nil {
 			return value
-		case .Uniform:
-			ctx.referenced_uniforms[value.id] = {}
-			fallthrough
-		case:
+		} else {
 			return { id = spv.OpLoad(builder, cg_type(ctx, v.type).type, value.id), }
 		}
 	case ^ast.Expr_Proc_Lit:
 		return cg_proc_lit(ctx, v)
 	case ^ast.Expr_Proc_Sig:
 	case ^ast.Expr_Paren:
+		return cg_expr(ctx, builder, v.expr, deref)
 	case ^ast.Expr_Selector:
 		lhs := cg_expr(ctx, builder, v.lhs, false)
 
 		lhs_type := v.lhs.type
-		assert(lhs_type.kind == .Struct)
+		if lhs.type.kind == .Struct {
+			field_index: int = -1
+			for field, i in lhs_type.variant.(^types.Struct).fields {
+				if field.name.text == v.selector.text {
+					field_index = i
+					break
+				}
+			}
+			assert(field_index != -1)
 
-		field_index: int = -1
-		for field, i in lhs_type.variant.(^types.Struct).fields {
-			if field.name.text == v.selector.text {
-				field_index = i
-				break
+			type_info := cg_type(ctx, v.type)
+			ptr       := spv.OpAccessChain(builder, cg_type_ptr(ctx, type_info, lhs.storage_class), lhs.id, cg_constant(ctx, i64(field_index)).id)
+
+			if deref {
+				return { id = spv.OpLoad(builder, type_info.type, ptr), }
+			} else {
+				return { id = ptr, storage_class = lhs.storage_class, }
 			}
 		}
-		assert(field_index != -1)
 
-		type_info := cg_type(ctx, v.type)
-		ptr       := spv.OpAccessChain(builder, cg_type_ptr(ctx, type_info, lhs.storage_class), lhs.id, cg_constant(ctx, i64(field_index)).id)
+		assert(lhs.type.kind == .Vector)
+		assert(deref)
 
-		if deref {
-			return { id = spv.OpLoad(builder, type_info.type, ptr), }
-		} else {
-			return { id = ptr, storage_class = lhs.storage_class, }
+		indices := make([dynamic]u32, 0, len(v.selector.text))
+		for char in v.selector.text {
+			switch char {
+			case 'x', 'r':
+				append(&indices, 0)
+			case 'y', 'g':
+				append(&indices, 1)
+			case 'z', 'b':
+				append(&indices, 2)
+			case 'w', 'a':
+				append(&indices, 3)
+			}
 		}
+
+		value := cg_deref(ctx, builder, lhs)
+		return { id = spv.OpVectorShuffle(builder, cg_type(ctx, v.type).type, value, value, ..indices[:]), }
 
 	case ^ast.Expr_Call:
 		if v.is_cast {
@@ -845,16 +935,16 @@ cg_expr :: proc(
 		rhs := cg_expr(ctx, builder, v.rhs)
 
 		if lhs.storage_class != nil {
-			return {
-				id            = spv.OpAccessChain(builder, cg_type_ptr(ctx, v.type, lhs.storage_class), lhs.id, rhs.id),
-				storage_class = lhs.storage_class,
+			id    := spv.OpAccessChain(builder, cg_type_ptr(ctx, v.type, lhs.storage_class), lhs.id, rhs.id)
+			value := CG_Value { id = id, storage_class = lhs.storage_class, }
+			if deref {
+				return { id = cg_deref(ctx, builder, value), }
+			} else {
+				return value
 			}
 		}
 
-		return {
-			id            = spv.OpAccessChain(builder, cg_type(ctx, v.type).type, lhs.id, rhs.id),
-			storage_class = lhs.storage_class,
-		}
+		return { id = spv.OpVectorExtractDynamic(builder, cg_type(ctx, v.type).type, lhs.id, rhs.id), }
 	case ^ast.Expr_Cast:
 	case ^ast.Expr_Unary:
 	
@@ -862,8 +952,7 @@ cg_expr :: proc(
 		panic("")
 	}
 
-	if true do fmt.panicf("unimplemented: %v", reflect.union_variant_typeid(expr.derived_expr))
-	return {}
+	fmt.panicf("unimplemented: %v", reflect.union_variant_typeid(expr.derived_expr))
 }
 
 cg_lookup_proc_scope :: proc(ctx: ^CG_Context) -> ^CG_Scope {
@@ -952,9 +1041,9 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 		jump_back_target := spv.OpLabel(builder)
 
 		header := spv.OpLabel(header_builder)
-		spv.OpName(&ctx.debug_a, header, "header")
+		spv.OpName(&ctx.debug_b, header, "header")
 		end    := spv.OpLabel(end_builder)
-		spv.OpName(&ctx.debug_a, end, "end")
+		spv.OpName(&ctx.debug_b, end, "end")
 
 		post_label := spv.OpLabel(post_builder)
 		cg_stmt(ctx, post_builder, v.post)
@@ -1027,8 +1116,6 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 				v.op,
 				{ id = spv.OpLoad(builder, lhs_ti.type, lhs.id), type = lhs.type, },
 				rhs,
-				v.lhs[lhs_i].type,
-				value.type,
 				v.lhs[lhs_i].type,
 			)
 			spv.OpStore(builder, lhs.id, value)

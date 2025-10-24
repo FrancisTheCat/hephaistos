@@ -214,6 +214,8 @@ parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
 			expr.value = token.value.float
 		case .Bool:
 			expr.value = token.value.bool
+		case .String:
+			expr.value = token.text[1:len(token.text) - 1]
 		case:
 			unreachable()
 		}
