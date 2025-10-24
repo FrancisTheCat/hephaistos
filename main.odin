@@ -7,8 +7,37 @@ import "core:strings"
 import "core:slice"
 import "core:terminal/ansi"
 
+import "ast"
 import "tokenizer"
 import "types"
+
+compile_shader :: proc(
+	source: string,
+	allocator       := context.allocator,
+	error_allocator := context.allocator,
+) -> (code: []u32, errors: []tokenizer.Error) {
+	tokens: []tokenizer.Token
+	tokens, errors = tokenizer.tokenize(source, false, context.allocator, error_allocator)
+	if len(errors) != 0 {
+		return
+	}
+
+	stmts: []^ast.Stmt
+	stmts, errors = parse(tokens, context.temp_allocator, error_allocator)
+	if len(errors) != 0 {
+		return
+	}
+
+	checker: Checker
+	errors = check(&checker, stmts, context.temp_allocator, error_allocator)
+	if len(errors) != 0 {
+		return
+	}
+
+	code = cg_generate(&checker, stmts, allocator = context.allocator)
+
+	return
+}
 
 main :: proc() {
 	user_formatters: map[typeid]fmt.User_Formatter
@@ -18,46 +47,17 @@ main :: proc() {
 		return true
 	})
 
-	file_name      := "test.hep"
-	source         := string(os.read_entire_file(file_name) or_else panic(""))
-	tokens, errors := tokenizer.tokenize(source, false)
+	file_name    := "test.hep"
+	source       := string(os.read_entire_file(file_name) or_else panic(""))
+	code, errors := compile_shader(source)
 
 	if len(errors) != 0 {
-		lines := strings.split_lines(source)
+		lines := strings.split_lines(source, context.temp_allocator)
 		for error in errors {
 			print_error(os.stream_from_handle(os.stderr), file_name, lines, error)
 		}
 		return
 	}
-
-	parser: Parser = {
-		tokens = tokens,
-	}
-	parse(&parser)
-
-	if len(parser.errors) != 0 {
-		lines := strings.split_lines(source)
-		for error in parser.errors {
-			print_error(os.stream_from_handle(os.stderr), file_name, lines, error)
-		}
-		return
-	}
-
-	checker: Checker
-	checker_init(&checker)
-	check_stmt_list(&checker, parser.global_stmts)
-
-	if len(checker.errors) != 0 {
-		lines := strings.split_lines(source)
-		for error in checker.errors {
-			print_error(os.stream_from_handle(os.stderr), file_name, lines, error)
-		}
-		return
-	}
-
-	cg_ctx: CG_Context
-	cg_init(&cg_ctx, &checker)
-	code := cg_generate(&cg_ctx, parser.global_stmts)
 
 	os.write_entire_file("a.spv", slice.to_bytes(code))
 	fmt.println(code)

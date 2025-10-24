@@ -12,6 +12,7 @@ import "types"
 
 Checker :: struct {
 	scope:           ^Scope,
+	allocator:       runtime.Allocator,
 	errors:          [dynamic]tokenizer.Error,
 	error_allocator: runtime.Allocator,
 }
@@ -455,7 +456,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			type := check_type(checker, v.type_expr)
 			for name in names {
 				entity_kind := Entity_Kind.Var
-				scope_insert_entity(checker, entity_new(entity_kind, name, type, decl = v))
+				scope_insert_entity(checker, entity_new(entity_kind, name, type, decl = v, allocator = checker.allocator))
 			}
 			for &t in v.types {
 				t = type
@@ -498,7 +499,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					}
 					v.types[name_i] = type
 
-					scope_insert_entity(checker, entity_new(entity_kind, name, type, decl = v))
+					scope_insert_entity(checker, entity_new(entity_kind, name, type, decl = v, allocator = checker.allocator))
 					name_i += 1
 				}
 			} else {
@@ -533,7 +534,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				}
 				v.types[name_i] = type
 
-				scope_insert_entity(checker, entity_new(entity_kind, name, type, decl = v))
+				scope_insert_entity(checker, entity_new(entity_kind, name, type, decl = v, allocator = checker.allocator))
 				name_i += 1
 			}
 		}
@@ -558,23 +559,42 @@ check_stmt_list :: proc(checker: ^Checker, stmts: []^ast.Stmt) -> (diverging: bo
 	return diverging
 }
 
-checker_init :: proc(checker: ^Checker) {
+checker_init :: proc(
+	checker: ^Checker,
+	allocator       := context.allocator,
+	error_allocator := context.allocator,
+) {
+	checker.allocator       = allocator
+	checker.error_allocator = error_allocator
+	checker.errors          = make([dynamic]tokenizer.Error, error_allocator)
+
 	scope_push(checker, .Global)
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "bool" }, types.t_bool))
+	scope_insert_entity(checker, entity_new(.Type, { text = "bool" }, types.t_bool, allocator = allocator))
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "i8"   }, types.t_i8 ))
-	scope_insert_entity(checker, entity_new(.Type, { text = "i16"  }, types.t_i16))
-	scope_insert_entity(checker, entity_new(.Type, { text = "i32"  }, types.t_i32))
-	scope_insert_entity(checker, entity_new(.Type, { text = "i64"  }, types.t_i64))
+	scope_insert_entity(checker, entity_new(.Type, { text = "i8"   }, types.t_i8 ,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "i16"  }, types.t_i16,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "i32"  }, types.t_i32,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "i64"  }, types.t_i64,  allocator = allocator))
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "u8"   }, types.t_u8 ))
-	scope_insert_entity(checker, entity_new(.Type, { text = "u16"  }, types.t_u16))
-	scope_insert_entity(checker, entity_new(.Type, { text = "u32"  }, types.t_u32))
-	scope_insert_entity(checker, entity_new(.Type, { text = "u64"  }, types.t_u64))
+	scope_insert_entity(checker, entity_new(.Type, { text = "u8"   }, types.t_u8 ,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "u16"  }, types.t_u16,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "u32"  }, types.t_u32,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "u64"  }, types.t_u64,  allocator = allocator))
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "f32"  }, types.t_f32))
-	scope_insert_entity(checker, entity_new(.Type, { text = "f64"  }, types.t_f64))
+	scope_insert_entity(checker, entity_new(.Type, { text = "f32"  }, types.t_f32,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "f64"  }, types.t_f64,  allocator = allocator))
+}
+
+check :: proc(
+	checker: ^Checker,
+	stmts:   []^ast.Stmt,
+	allocator       := context.allocator,
+	error_allocator := context.allocator,
+) -> []tokenizer.Error {
+	checker_init(checker, allocator, error_allocator)
+	check_stmt_list(checker, stmts)
+	return checker.errors[:]
 }
 
 op_is_relation :: proc(token_kind: tokenizer.Token_Kind) -> bool {
@@ -773,11 +793,11 @@ check_proc_type :: proc(checker: ^Checker, p: $T) -> ^types.Proc {
 		})
 	}
 
-	t        := types.type_new(.Proc, types.Proc)
+	t        := types.new(.Proc, types.Proc, checker.allocator)
 	t.args    = args[:]
 	t.returns = returns[:]
 
-	return_type       := types.type_new(.Tuple, types.Struct)
+	return_type       := types.new(.Tuple, types.Struct, checker.allocator)
 	return_type.fields = returns[:]
 	t.return_type      = return_type
 
@@ -900,7 +920,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 
 		for arg in type.args {
 			if arg.name.text != "" {
-				scope_insert_entity(checker, entity_new(.Param, arg.name, arg.type))
+				scope_insert_entity(checker, entity_new(.Param, arg.name, arg.type, allocator = checker.allocator))
 			}
 		}
 
@@ -909,7 +929,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 
 		for ret in type.returns {
 			if ret.name.text != "" {
-				scope_insert_entity(checker, entity_new(.Var, ret.name, ret.type))
+				scope_insert_entity(checker, entity_new(.Var, ret.name, ret.type, allocator = checker.allocator))
 			}
 		}
 		check_stmt_list(checker, v.body)
@@ -945,7 +965,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				return
 			}
 
-			type      := types.type_new(.Vector, types.Vector)
+			type      := types.new(.Vector, types.Vector, checker.allocator)
 			type.count = len(v.selector.text)
 			type.elem  = lhs.type.variant.(^types.Vector).elem
 			type.size  = type.elem.size * type.count
@@ -1067,7 +1087,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		operand.type = expr.type
 
 	case ^ast.Type_Matrix:
-		type := types.type_new(.Matrix, types.Matrix)
+		type := types.new(.Matrix, types.Matrix, checker.allocator)
 
 		rows := check_expr(checker, v.rows)
 		if rows.mode != .Const || (rows.type.kind != .Int && rows.type.kind != .Uint) {
@@ -1085,7 +1105,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			}
 		}
 
-		col_type      := types.type_new(.Vector, types.Vector)
+		col_type      := types.new(.Vector, types.Vector, checker.allocator)
 		col_type.count = int(rows.value.(i64) or_else 0)
 		col_type.elem  = types.default_type(check_type(checker, v.elem))
 		col_type.size  = col_type.elem.size * col_type.count
@@ -1101,7 +1121,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		operand.type = type
 		operand.mode = .Type
 	case ^ast.Type_Array:
-		type := types.type_new(.Vector, types.Vector)
+		type := types.new(.Vector, types.Vector, checker.allocator)
 
 		count := check_expr(checker, v.count)
 		if count.mode != .Const || (count.type.kind != .Int && count.type.kind != .Uint) {
@@ -1118,7 +1138,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 	case ^ast.Type_Struct:
 		operand.mode = .Type
 
-		type        := types.type_new(.Struct, types.Struct)
+		type        := types.new(.Struct, types.Struct, checker.allocator)
 		fields      := make([dynamic]types.Field, 0, len(v.fields))
 		fields_seen := make(map[string]struct{})
 		offset      := 0

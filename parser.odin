@@ -15,8 +15,8 @@ Parser :: struct {
 	tokens:          []tokenizer.Token,
 	errors:          [dynamic]tokenizer.Error,
 	end_location:    tokenizer.Location,
+	allocator:       runtime.Allocator,
 	error_allocator: runtime.Allocator,
-	global_stmts:    []^ast.Stmt,
 }
 
 token_peek :: proc(parser: ^Parser, lookahead := 0) -> tokenizer.Token {
@@ -69,7 +69,7 @@ token_expect :: proc(parser: ^Parser, kind: tokenizer.Token_Kind, after: string 
 }
 
 parse_field_list :: proc(parser: ^Parser, terminator: tokenizer.Token_Kind, allow_default_values: bool) -> (_fields: []ast.Field, ok: bool) {
-	fields := make([dynamic]ast.Field)
+	fields := make([dynamic]ast.Field, parser.allocator)
 
 	loop: for {
 		#partial switch token_peek(parser).kind {
@@ -109,7 +109,7 @@ parse_field_list :: proc(parser: ^Parser, terminator: tokenizer.Token_Kind, allo
 }
 
 parse_arg_list :: proc(parser: ^Parser, terminator: tokenizer.Token_Kind) -> (_fields: []ast.Field, ok: bool) {
-	fields := make([dynamic]ast.Field)
+	fields := make([dynamic]ast.Field, parser.allocator)
 
 	loop: for {
 		#partial switch token_peek(parser).kind {
@@ -153,7 +153,7 @@ parse_proc_signature :: proc(parser: ^Parser) -> (args, returns: []ast.Field, ok
 			token_advance(parser)
 			returns = parse_field_list(parser, .Close_Paren, true) or_return
 		} else {
-			returns         = make([]ast.Field, 1)
+			returns         = make([]ast.Field, 1, parser.allocator)
 			returns[0].type = parse_expr(parser) or_return
 		}
 	}
@@ -170,7 +170,7 @@ parse_stmt_list :: proc(
 		token_advance(parser)
 	}
 
-	stmts := make([dynamic]^ast.Stmt)
+	stmts := make([dynamic]^ast.Stmt, parser.allocator)
 	for {
 		#partial switch token_peek(parser).kind {
 		case .EOF:
@@ -200,13 +200,13 @@ parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
 	#partial switch token.kind {
 	case .Ident:
 		token_advance(parser)
-		expr := ast.new(ast.Expr_Ident, token.location, parser.end_location)
+		expr := ast.new(ast.Expr_Ident, token.location, parser.end_location, parser.allocator)
 		expr.ident = token
 		return expr, true
 
 	case .Literal:
 		token_advance(parser)
-		expr := ast.new(ast.Expr_Constant, token.location, parser.end_location)
+		expr := ast.new(ast.Expr_Constant, token.location, parser.end_location, parser.allocator)
 		#partial switch token.value_kind {
 		case .Int:
 			expr.value = token.value.int
@@ -224,7 +224,7 @@ parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
 	case .Open_Brace:
 		token_advance(parser)
 		fields := parse_arg_list(parser, .Close_Brace) or_return
-		expr   := ast.new(ast.Expr_Compound, token.location, parser.end_location)
+		expr   := ast.new(ast.Expr_Compound, token.location, parser.end_location, parser.allocator)
 		expr.fields = fields
 		return expr, true
 
@@ -235,13 +235,13 @@ parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
 			body := parse_stmt_list(parser) or_return
 			token_advance(parser)
 
-			lit := ast.new(ast.Expr_Proc_Lit, token.location, parser.end_location)
+			lit := ast.new(ast.Expr_Proc_Lit, token.location, parser.end_location, parser.allocator)
 			lit.args    = args
 			lit.returns = returns
 			lit.body    = body
 			return lit, true
 		} else {
-			sig := ast.new(ast.Expr_Proc_Sig, token.location, parser.end_location)
+			sig := ast.new(ast.Expr_Proc_Sig, token.location, parser.end_location, parser.allocator)
 			sig.args    = args
 			sig.returns = returns
 			return sig, true
@@ -251,7 +251,7 @@ parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
 		token_advance(parser)
 		token_expect(parser, .Open_Brace) or_return
 		fields := parse_field_list(parser, .Close_Brace, false) or_return
-		s := ast.new(ast.Type_Struct, token.location, parser.end_location)
+		s := ast.new(ast.Type_Struct, token.location, parser.end_location, parser.allocator)
 		s.fields = fields
 		return s, true
 
@@ -267,7 +267,7 @@ parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
 		token_expect(parser, .Close_Bracket) or_return
 		elem := parse_expr(parser) or_return
 
-		m := ast.new(ast.Type_Matrix, token.location, parser.end_location)
+		m := ast.new(ast.Type_Matrix, token.location, parser.end_location, parser.allocator)
 		m.rows = rows
 		m.cols = cols
 		m.elem = elem
@@ -282,7 +282,7 @@ parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
 		token_expect(parser, .Close_Bracket) or_return
 		elem := parse_expr(parser) or_return
 
-		a := ast.new(ast.Type_Array, token.location, parser.end_location)
+		a := ast.new(ast.Type_Array, token.location, parser.end_location, parser.allocator)
 		a.count = count
 		a.elem = elem
 		return a, true
@@ -291,14 +291,14 @@ parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
 		token_advance(parser)
 		expr := parse_expr(parser) or_return
 		token_expect(parser, .Close_Paren) or_return
-		paren := ast.new(ast.Expr_Paren, token.location, parser.end_location)
+		paren := ast.new(ast.Expr_Paren, token.location, parser.end_location, parser.allocator)
 		paren.expr = expr
 		return paren, true
 
 	case .Add, .Subtract, .Xor:
 		token_advance(parser)
 		expr  := parse_atom_expr(parser) or_return
-		unary := ast.new(ast.Expr_Unary, token.location, parser.end_location)
+		unary := ast.new(ast.Expr_Unary, token.location, parser.end_location, parser.allocator)
 		unary.expr = expr
 		return unary, true
 	}
@@ -335,7 +335,7 @@ parse_expr :: proc(parser: ^Parser, min_power := 0) -> (expr: ^ast.Expr, ok: boo
 		case .Period:
 			token_advance(parser)
 			ident    := token_expect(parser, .Ident) or_return
-			selector := ast.new(ast.Expr_Selector, lhs.start, parser.end_location)
+			selector := ast.new(ast.Expr_Selector, lhs.start, parser.end_location, parser.allocator)
 			selector.lhs      = lhs
 			selector.selector = ident
 			lhs               = selector
@@ -344,7 +344,7 @@ parse_expr :: proc(parser: ^Parser, min_power := 0) -> (expr: ^ast.Expr, ok: boo
 		case .Open_Paren:
 			token_advance(parser)
 			args := parse_arg_list(parser, .Close_Paren) or_return
-			call := ast.new(ast.Expr_Call, lhs.start, parser.end_location)
+			call := ast.new(ast.Expr_Call, lhs.start, parser.end_location, parser.allocator)
 			call.lhs  = lhs
 			call.args = args
 			lhs       = call
@@ -354,7 +354,7 @@ parse_expr :: proc(parser: ^Parser, min_power := 0) -> (expr: ^ast.Expr, ok: boo
 			token_advance(parser)
 			rhs := parse_expr(parser) or_return
 			token_expect(parser, .Close_Bracket) or_return
-			index := ast.new(ast.Expr_Index, lhs.start, parser.end_location)
+			index := ast.new(ast.Expr_Index, lhs.start, parser.end_location, parser.allocator)
 			index.lhs = lhs
 			index.rhs = rhs
 			lhs       = index
@@ -367,7 +367,7 @@ parse_expr :: proc(parser: ^Parser, min_power := 0) -> (expr: ^ast.Expr, ok: boo
 		}
 		token_advance(parser)
 		rhs := parse_expr(parser, power) or_return
-		e   := ast.new(ast.Expr_Binary, lhs.start, parser.end_location)
+		e   := ast.new(ast.Expr_Binary, lhs.start, parser.end_location, parser.allocator)
 
 		e.op  = op.kind
 		e.lhs = lhs
@@ -379,7 +379,7 @@ parse_expr :: proc(parser: ^Parser, min_power := 0) -> (expr: ^ast.Expr, ok: boo
 }
 
 parse_expr_list :: proc(parser: ^Parser) -> (exprs: []^ast.Expr, ok: bool) {
-	es := make([dynamic]^ast.Expr)
+	es := make([dynamic]^ast.Expr, parser.allocator)
 	for token_peek(parser).kind != .EOF {
 		append(&es, parse_expr(parser) or_return)
 		if token_peek(parser).kind == .Comma {
@@ -396,7 +396,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 	#partial switch token.kind {
 	case .Literal:
 		expr := parse_expr(parser) or_return
-		se   := ast.new(ast.Stmt_Expr, token.location, parser.end_location)
+		se   := ast.new(ast.Stmt_Expr, token.location, parser.end_location, parser.allocator)
 		se.expr = expr
 		return se, true
 	case .Ident, .Cast, .Open_Paren:
@@ -405,7 +405,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 		case .Assign:
 			assign_token := token_advance(parser)
 			rhs          := parse_expr_list(parser) or_return
-			assign       := ast.new(ast.Stmt_Assign, token.location, parser.end_location)
+			assign       := ast.new(ast.Stmt_Assign, token.location, parser.end_location, parser.allocator)
 			assign.lhs    = lhs[:]
 			assign.rhs    = rhs
 			assign.op     = assign_token.value.op
@@ -415,7 +415,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 			if token_peek(parser).kind == .Assign || token_peek(parser).kind == .Colon {
 				mutable     := token_advance(parser).kind == .Assign
 				values      := parse_expr_list(parser) or_return
-				decl        := ast.new(ast.Decl_Value, token.location, parser.end_location)
+				decl        := ast.new(ast.Decl_Value, token.location, parser.end_location, parser.allocator)
 				decl.lhs        = lhs
 				decl.values     = values
 				decl.mutable    = mutable
@@ -426,7 +426,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 				if token_peek(parser).kind == .Assign || token_peek(parser).kind == .Colon {
 					mutable       := token_advance(parser).kind == .Assign
 					values        := parse_expr_list(parser) or_return
-					decl          := ast.new(ast.Decl_Value, token.location, parser.end_location)
+					decl          := ast.new(ast.Decl_Value, token.location, parser.end_location, parser.allocator)
 					decl.lhs        = lhs
 					decl.values     = values
 					decl.mutable    = mutable
@@ -434,7 +434,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 					decl.attributes = attributes
 					return decl, true
 				} else {
-					decl           := ast.new(ast.Decl_Value, token.location, parser.end_location)
+					decl           := ast.new(ast.Decl_Value, token.location, parser.end_location, parser.allocator)
 					decl.lhs        = lhs
 					decl.mutable    = true
 					decl.type_expr  = type
@@ -444,7 +444,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 			}
 		case:
 			if len(lhs) == 1 {
-				se := ast.new(ast.Stmt_Expr, token.location, parser.end_location)
+				se := ast.new(ast.Stmt_Expr, token.location, parser.end_location, parser.allocator)
 				se.expr = lhs[0]
 				return se, true
 			}
@@ -472,7 +472,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 		// 	value = parse_expr(parser) or_return
 		// }
 
-		// value_decl := ast.new(ast.Decl_Value, ident.location, parser.end_location)
+		// value_decl := ast.new(ast.Decl_Value, ident.location, parser.end_location, parser.allocator)
 		// value_decl.type    = type
 		// value_decl.name    = ident
 		// value_decl.value   = value
@@ -481,7 +481,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 		// return value_decl, true
 	case .Return:
 		token_advance(parser)
-		values := make([dynamic]^ast.Expr)
+		values := make([dynamic]^ast.Expr, parser.allocator)
 		for token_peek(parser).kind != .Semicolon {
 			if len(values) != 0 {
 				token_expect(parser, .Comma)
@@ -489,7 +489,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 			value := parse_expr(parser) or_return
 			append(&values, value)
 		}
-		ret := ast.new(ast.Stmt_Return, token.location, parser.end_location)
+		ret := ast.new(ast.Stmt_Return, token.location, parser.end_location, parser.allocator)
 		ret.values = values[:]
 
 		return ret, true
@@ -499,7 +499,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 		if token_peek(parser).kind == .Ident {
 			label = token_advance(parser)
 		}
-		cont := ast.new(ast.Stmt_Continue, token.location, parser.end_location)
+		cont := ast.new(ast.Stmt_Continue, token.location, parser.end_location, parser.allocator)
 		cont.label = label
 
 		return cont, true
@@ -509,7 +509,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 		if token_peek(parser).kind == .Ident {
 			label = token_advance(parser)
 		}
-		brk := ast.new(ast.Stmt_Break, token.location, parser.end_location)
+		brk := ast.new(ast.Stmt_Break, token.location, parser.end_location, parser.allocator)
 		brk.label = label
 
 		return brk, true
@@ -521,7 +521,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 
 parse_attributes :: proc(parser: ^Parser) -> (_attributes: []ast.Field, ok: bool) {
 	token_expect(parser, .Attribute)
-	attributes := make([dynamic]ast.Field)
+	attributes := make([dynamic]ast.Field, parser.allocator)
 
 	parse_attr_list :: proc(parser: ^Parser, attributes: ^[dynamic]ast.Field) -> bool {
 		loop: for {
@@ -625,7 +625,7 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 		body := parse_stmt_list(parser) or_return
 		token_advance(parser)
 
-		for_stmt := ast.new(ast.Stmt_For, token.location, parser.end_location)
+		for_stmt := ast.new(ast.Stmt_For, token.location, parser.end_location, parser.allocator)
 		for_stmt.label = label
 		for_stmt.init  = init
 		for_stmt.cond  = cond
@@ -658,7 +658,7 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 			token_expect(parser, .Close_Brace)
 		}
 
-		if_stmt := ast.new(ast.Stmt_If, token.location, parser.end_location)
+		if_stmt := ast.new(ast.Stmt_If, token.location, parser.end_location, parser.allocator)
 		if_stmt.label      = label
 		if_stmt.init       = init
 		if_stmt.cond       = cond
@@ -682,7 +682,7 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 
 		token_expect(parser, .Open_Brace) or_return
 
-		cases := make([dynamic]ast.Switch_Case)
+		cases := make([dynamic]ast.Switch_Case, parser.allocator)
 		for token_peek(parser).kind != .Close_Brace && !parser_at_end(parser) {
 			token_expect(parser, .Case) or_continue
 			value: ^ast.Expr
@@ -697,7 +697,7 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 		}
 		token_expect(parser, .Close_Brace)
 
-		s := ast.new(ast.Stmt_Switch, token.location, parser.end_location)
+		s := ast.new(ast.Stmt_Switch, token.location, parser.end_location, parser.allocator)
 		s.init  = init
 		s.cond  = cond
 		s.cases = cases[:]
@@ -709,7 +709,7 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 		stmts := parse_stmt_list(parser) or_return
 		token_advance(parser)
 
-		block := ast.new(ast.Stmt_Block, token.location, parser.end_location)
+		block := ast.new(ast.Stmt_Block, token.location, parser.end_location, parser.allocator)
 		block.label = label
 		block.body  = stmts
 		return block, true
@@ -783,14 +783,25 @@ print_stmt :: proc(b: ^strings.Builder, stmt: ^ast.Stmt, indent := 0) {
 	}
 }
 
-parse :: proc(parser: ^Parser) -> (ok: bool) {
-	for token_peek(parser).kind == .Semicolon {
-		token_advance(parser)
+parse :: proc(
+	tokens: []tokenizer.Token,
+	allocator       := context.allocator,
+	error_allocator := context.allocator,
+) -> ([]^ast.Stmt, []tokenizer.Error) {
+	parser: Parser = {
+		allocator       = allocator,
+		error_allocator = error_allocator,
+		errors          = make([dynamic]tokenizer.Error, error_allocator),
+		tokens          = tokens,
 	}
 
-	parser.global_stmts, ok = parse_stmt_list(parser, .EOF)
+	for token_peek(&parser).kind == .Semicolon {
+		token_advance(&parser)
+	}
 
-	return
+	global_stmts, _ := parse_stmt_list(&parser, .EOF)
+
+	return global_stmts, parser.errors[:]
 }
 
 parser_at_end :: proc(parser: ^Parser) -> bool {

@@ -271,7 +271,7 @@ tokenize :: proc(
 				if current >= len(source) - 1 {
 					append(&errors, Error {
 						location = token.location,
-						message  = fmt.tprintf("unterminated multi-line comment"),
+						message  = "unterminated multi-line comment",
 					})
 				}
 
@@ -297,7 +297,7 @@ tokenize :: proc(
 				if current == len(source) {
 					append(&errors, Error {
 						location = token.location,
-						message  = fmt.tprintf("expected < or = after .., got EOF"),
+						message  = "expected < or = after .., got EOF",
 					})
 					break
 				}
@@ -311,7 +311,7 @@ tokenize :: proc(
 				case:
 					append(&errors, Error {
 						location = token.location,
-						message  = fmt.tprintf("expected < or = after .., got '%c'", source[current]),
+						message  = fmt.aprintf("expected < or = after .., got '%c'", source[current], error_allocator),
 					})
 				}
 			} else {
@@ -335,7 +335,7 @@ tokenize :: proc(
 			} else {
 				append(&errors, Error {
 					location = token.location,
-					message  = fmt.tprintf("unterminated string literal"),
+					message  = fmt.aprintf("unterminated string literal", error_allocator),
 				})
 			}
 
@@ -404,7 +404,7 @@ tokenize :: proc(
 				} else {
 					append(&errors, Error {
 						location = token.location,
-						message  = fmt.tprintf("failed to parse float literal: '%s'", source[start:current]),
+						message  = fmt.aprintf("failed to parse float literal: '%s'", source[start:current], error_allocator),
 					})
 				}
 			} else {
@@ -415,7 +415,7 @@ tokenize :: proc(
 				} else {
 					append(&errors, Error {
 						location = token.location,
-						message  = fmt.tprintf("failed to parse integer literal: '%s'", source[start:current]),
+						message  = fmt.aprintf("failed to parse integer literal: '%s'", source[start:current], error_allocator),
 					})
 				}
 			}
@@ -449,7 +449,7 @@ tokenize :: proc(
 		case:
 			append(&errors, Error {
 				location = token.location,
-				message  = fmt.tprintf("unexecpected character: '%c'", char),
+				message  = fmt.aprintf("unexecpected character: '%c'", char, error_allocator),
 			})
 			continue
 		}

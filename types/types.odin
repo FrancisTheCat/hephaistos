@@ -4,6 +4,7 @@ import "core:io"
 import "core:fmt"
 import "core:strings"
 import "core:hash"
+import "core:mem"
 
 import "../tokenizer"
 
@@ -73,8 +74,8 @@ Type :: struct {
 	},
 }
 
-type_new :: proc(kind: Kind, $T: typeid) -> ^T {
-	t := new(T)
+new :: proc(kind: Kind, $T: typeid, allocator: mem.Allocator) -> ^T {
+	t, _ := mem.new(T, allocator)
 	t.kind    = kind
 	t.variant = t
 	return t

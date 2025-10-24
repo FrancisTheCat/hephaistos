@@ -133,41 +133,6 @@ cg_scope :: proc(
 	return
 }
 
-cg_init :: proc(ctx: ^CG_Context, checker: ^Checker, file_name: Maybe(string) = nil, file_source: Maybe(string) = nil) {
-	ctx.checker                     = checker
-	ctx.meta.current_id             = &ctx.current_id
-	ctx.memory_model.current_id     = &ctx.current_id
-	ctx.entry_points.current_id     = &ctx.current_id
-	ctx.exectution_modes.current_id = &ctx.current_id
-	ctx.debug_a.current_id          = &ctx.current_id
-	ctx.debug_b.current_id          = &ctx.current_id
-	ctx.annotations.current_id      = &ctx.current_id
-	ctx.types.current_id            = &ctx.current_id
-	ctx.globals.current_id          = &ctx.current_id
-	ctx.functions.current_id        = &ctx.current_id
-
-	ctx.type_registry = make([][dynamic]Type_Hash_Entry, 1024)
-
-	append(&ctx.meta.data, spv.MAGIC_NUMBER)
-	append(&ctx.meta.data, spv.VERSION)
-	append(&ctx.meta.data, 'H' << 0 | 'E' << 8 | 'P' << 16 | 'H' << 24)
-	append(&ctx.meta.data, 4194303)
-	append(&ctx.meta.data, 0)
-	cg_scope_push(ctx)
-
-	void := spv.OpTypeVoid(&ctx.types)
-	assert(void == VOID)
-	void_proc := spv.OpTypeFunction(&ctx.types, void)
-	assert(void_proc == VOID_PROC)
-
-	spv.OpName(&ctx.debug_b, void,      "$VOID")
-	spv.OpName(&ctx.debug_b, void_proc, "$VOID_PROC")
-
-	if file_name, ok := file_name.?; ok {
-		spv.OpSource(&ctx.debug_a, .Unknown, 0, cg_string(ctx, file_name), file_source)
-	}
-}
-
 register_type :: proc(registry: ^Type_Registry, t: ^types.Type) -> (type_info: ^CG_Type_Info, ok: bool) {
 	hash := types.type_hash(t)
 	if hash == 0 {
@@ -291,15 +256,49 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 }
 
 @(require_results)
-cg_generate :: proc(ctx: ^CG_Context, stmts: []^ast.Stmt) -> []u32 {
-	// capabilities
+cg_generate :: proc(
+	checker:     ^Checker,
+	stmts:       []^ast.Stmt,
+	file_name:   Maybe(string) = nil,
+	file_source: Maybe(string) = nil,
+	allocator := context.allocator,
+) -> []u32 {
+	context.allocator = context.temp_allocator
+
+	ctx: CG_Context = {
+		checker       = checker,
+		type_registry = make(Type_Registry, 1024),
+	}
+
+	for b := cast([^]spv.Builder)&ctx.meta; b != cast([^]spv.Builder)&ctx.current_id; b = b[1:] {
+		b[0].current_id = &ctx.current_id
+	}
+
+	append(&ctx.meta.data, spv.MAGIC_NUMBER)
+	append(&ctx.meta.data, spv.VERSION)
+	append(&ctx.meta.data, 'H' << 0 | 'E' << 8 | 'P' << 16 | 'H' << 24)
+	append(&ctx.meta.data, 4194303)
+	append(&ctx.meta.data, 0)
+	cg_scope_push(&ctx)
+
+	void := spv.OpTypeVoid(&ctx.types)
+	assert(void == VOID)
+	void_proc := spv.OpTypeFunction(&ctx.types, void)
+	assert(void_proc == VOID_PROC)
+
+	spv.OpName(&ctx.debug_b, void,      "$VOID")
+	spv.OpName(&ctx.debug_b, void_proc, "$VOID_PROC")
+
+	if file_name, ok := file_name.?; ok {
+		spv.OpSource(&ctx.debug_a, .Unknown, 0, cg_string(&ctx, file_name), file_source)
+	}
+
 	spv.OpCapability(&ctx.meta, .Shader)
 
-	// memory model
 	spv.OpMemoryModel(&ctx.memory_model, .Logical, .Simple)
 
 	b: spv.Builder = { current_id = &ctx.current_id }
-	cg_stmt_list(ctx, &b, stmts, true)
+	cg_stmt_list(&ctx, &b, stmts, true)
 
 	spirv := slice.concatenate([][]u32{
 		ctx.meta.data[:],
@@ -313,7 +312,7 @@ cg_generate :: proc(ctx: ^CG_Context, stmts: []^ast.Stmt) -> []u32 {
 		ctx.globals.data[:],
 		ctx.functions.data[:],
 		b.data[:],
-	})
+	}, allocator)
 	spirv[spv.ID_BOUND_INDEX] = u32(ctx.current_id + 1)
 	return spirv
 }

@@ -1,5 +1,7 @@
 package hephaistos
 
+import "core:mem"
+
 import "ast"
 import "tokenizer"
 import "types"
@@ -44,13 +46,14 @@ Entity :: struct {
 
 @(require_results)
 entity_new :: proc(
-	kind:  Entity_Kind,
-	ident: tokenizer.Token,
-	type:  ^types.Type,
-	value: types.Const_Value = nil,
-	decl:  ^ast.Decl         = nil,
+	kind:      Entity_Kind,
+	ident:     tokenizer.Token,
+	type:      ^types.Type,
+	value:     types.Const_Value = nil,
+	decl:      ^ast.Decl         = nil,
+	allocator: mem.Allocator,
 ) -> ^Entity {
-	e := new(Entity)
+	e := new(Entity, allocator)
 	e.kind  = kind
 	e.type  = type
 	e.ident = ident

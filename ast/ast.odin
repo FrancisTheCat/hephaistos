@@ -304,8 +304,8 @@ Any_Stmt :: union {
 	^Decl_Value,
 }
 
-new :: proc($T: typeid, start, end: tokenizer.Location) -> ^T {
-	n, _ := mem.new(T)
+new :: proc($T: typeid, start, end: tokenizer.Location, allocator: mem.Allocator) -> ^T {
+	n, _ := mem.new(T, allocator)
 	n.start   = start
 	n.end     = end
 	n.derived = n
