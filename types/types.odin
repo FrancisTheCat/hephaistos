@@ -9,10 +9,11 @@ import "core:mem"
 import "../tokenizer"
 
 Field :: struct {
-	name:   tokenizer.Token,
-	type:  ^Type,
-	value:  Const_Value,
-	offset: int,
+	name:     tokenizer.Token,
+	type:     ^Type,
+	value:    Const_Value,
+	offset:   int,
+	location: int,
 }
 
 Const_Value :: union {
@@ -74,6 +75,7 @@ Type :: struct {
 	},
 }
 
+@(require_results)
 new :: proc(kind: Kind, $T: typeid, allocator: mem.Allocator) -> ^T {
 	t, _ := mem.new(T, allocator)
 	t.kind    = kind
@@ -207,28 +209,38 @@ equal :: proc(a, b: ^Type) -> bool {
 		return a.size == b.size && a.align == b.align
 
 	case .Struct:
-		unimplemented()
+		a := a.variant.(^Struct)
+		b := b.variant.(^Struct)
+		if len(a.fields) != len(b.fields) {
+			return false
+		}
+
+		for i in 0 ..< len(a.fields) {
+			if a.fields[i].offset != b.fields[i].offset {
+				return false
+			}
+			if a.fields[i].location != b.fields[i].location {
+				return false
+			}
+			if !equal(a.fields[i].type, b.fields[i].type) {
+				return false
+			}
+		}
+
+		return true
+
 	case .Matrix:
 		a := a.variant.(^Matrix)
 		b := b.variant.(^Matrix)
-
-		if a == b {
-			return true
-		}
 
 		if a.cols != b.cols {
 			return false
 		}
 
 		return equal(a.col_type, b.col_type)
-		
 	case .Vector:
 		a := a.variant.(^Vector)
 		b := b.variant.(^Vector)
-
-		if a == b {
-			return true
-		}
 
 		if a.count != b.count {
 			return false
@@ -242,108 +254,59 @@ equal :: proc(a, b: ^Type) -> bool {
 	return true
 }
 
-implicity_castable :: proc(from, to: ^Type) -> bool {
+@(require_results)
+base_type :: proc(type: ^Type) -> ^Type {
+	type := type
+	for type.kind == .Tuple {
+		t := type.variant.(^Struct)
+		if len(t.fields) == 1 {
+			type = t.fields[0].type
+		} else {
+			return type
+		}
+	}
+	return type
+}
+
+@(require_results)
+implicitly_castable :: proc(from, to: ^Type) -> bool {
+	to   := base_type(to)
+	from := base_type(from)
+
+	if equal(from, to) {
+		return true
+	}
+
+	if from.size == 0 {
+		if to.kind == .Int && from.kind == .Float {
+			return false
+		}
+		return true
+	}
+
+	if is_numeric(from) && to.kind == .Vector {
+		return implicitly_castable(from, to.variant.(^Vector).elem)
+	}
+
+	if is_numeric(from) && to.kind == .Matrix {
+		return implicitly_castable(from, to.variant.(^Matrix).col_type.elem)
+	}
+
 	return false
 }
 
 @(require_results)
-op_result_type :: proc(a, b: ^Type) -> (result: ^Type) {
-	a := a
-	b := b
-
-	if a == b {
-		return a
+op_result_type :: proc(a, b: ^Type, is_multiply: bool) -> ^Type {
+	if is_multiply && (is_matrix(a) || is_matrix(b)) {
+		return matrix_multiply_type(a, b)
 	}
 
-	if a == nil || b == nil {
-		return t_invalid
-	}
-
-	if a.kind == .Tuple {
-		t := a.variant.(^Struct)
-		if len(t.fields) == 1 {
-			a = t.fields[0].type
-		}
-	}
-
-	if b.kind == .Tuple {
-		t := b.variant.(^Struct)
-		if len(t.fields) == 1 {
-			b = t.fields[0].type
-		}
-	}
-
-	if a.kind == .Invalid || b.kind == .Invalid {
-		return t_invalid
-	}
-
-	if a.size == 0 && b.size == 0 {
-		if a.kind == .Float || b.kind == .Float {
-			return t_float
-		} else {
-			return t_int
-		}
-	}
-	
-	if a.size == 0 {
-		if b.kind == .Int && a.kind == .Float {
-			return t_invalid
-		}
+	if implicitly_castable(a, b) {
 		return b
 	}
 
-	if b.size == 0 {
-		if a.kind == .Int && b.kind == .Float {
-			return t_invalid
-		}
+	if implicitly_castable(b, a) {
 		return a
-	}
-
-	if equal(a, b) {
-		return a
-	}
-
-	if a.kind == .Matrix && b.kind == .Matrix {
-		return t_invalid
-	}
-	if a.kind == .Vector && b.kind == .Vector {
-		return t_invalid
-	}
-
-	if a.kind == .Matrix || b.kind == .Matrix {
-		m: ^Type
-		s: ^Type
-		if a.kind == .Matrix {
-			m = a
-			s = b
-		} else {
-			m = b
-			s = a
-		}
-
-		if op_result_type(m.variant.(^Matrix).col_type.elem, s).kind != .Invalid {
-			return m
-		} else {
-			return t_invalid
-		}
-	}
-
-	if a.kind == .Vector || b.kind == .Vector {
-		v: ^Type
-		s: ^Type
-		if a.kind == .Vector {
-			v = a
-			s = b
-		} else {
-			v = b
-			s = a
-		}
-
-		if op_result_type(v.variant.(^Vector).elem, s).kind != .Invalid {
-			return v
-		} else {
-			return t_invalid
-		}
 	}
 
 	return t_invalid
@@ -351,6 +314,8 @@ op_result_type :: proc(a, b: ^Type) -> (result: ^Type) {
 
 @(require_results)
 default_type :: proc(type: ^Type) -> ^Type {
+	type := base_type(type)
+
 	if type == nil || type.size != 0 {
 		return type
 	}
@@ -378,15 +343,43 @@ castable :: proc(from, to: ^Type) -> bool {
 		return true
 	}
 
+	if implicitly_castable(from, to) {
+		return true
+	}
+
 	if is_numeric(from) && is_numeric(to) {
 		return true
 	}
 
-	if from.kind == .Bool && is_integer(to) {
+	if is_bool(from) && is_integer(to) {
+		return true
+	}
+
+	if is_numeric(from) && is_vector(to) {
 		return true
 	}
 
 	return false
+}
+
+@(require_results)
+is_vector :: proc(type: ^Type) -> bool {
+	return type.kind == .Vector
+}
+
+@(require_results)
+is_matrix :: proc(type: ^Type) -> bool {
+	return type.kind == .Matrix
+}
+
+@(require_results)
+is_struct :: proc(type: ^Type) -> bool {
+	return type.kind == .Struct
+}
+
+@(require_results)
+is_bool :: proc(type: ^Type) -> bool {
+	return type.kind == .Bool
 }
 
 @(require_results)
@@ -451,4 +444,154 @@ type_hash :: proc(type: ^Type) -> u64 {
 	}
 	
 	return h
+}
+
+@(require_results)
+matrix_multiply_type :: proc(a, b: ^Type, allocator := context.allocator) -> ^Type {
+	if a == nil || b == nil {
+		return t_invalid
+	}
+
+	assert(a.kind == .Matrix || b.kind == .Matrix)
+
+	if a.kind == .Matrix && b.kind == .Matrix {
+		a := a.variant.(^Matrix)
+		b := b.variant.(^Matrix)
+
+		if a.cols != b.col_type.count {
+			return t_invalid
+		}
+
+		if !equal(a.col_type.elem, b.col_type.elem) {
+			return t_invalid
+		}
+
+		col := vector_new(a.col_type.elem, a.col_type.count, allocator)
+		return matrix_new(col, b.cols, allocator)
+	}
+
+	if a.kind == .Matrix && b.kind == .Vector {
+		a := a.variant.(^Matrix)
+		v := b.variant.(^Vector)
+
+		if a.cols != v.count {
+			return t_invalid
+		}
+
+		if !equal(v.elem, matrix_elem_type(a)) {
+			return t_invalid
+		}
+
+		return vector_new(v.elem, a.col_type.count, allocator)
+	}
+
+	if a.kind == .Vector && b.kind == .Matrix {
+		v := a.variant.(^Vector)
+		b := b.variant.(^Matrix)
+
+		if v.count != b.col_type.count {
+			return t_invalid
+		}
+
+		if !equal(v.elem, matrix_elem_type(b)) {
+			return t_invalid
+		}
+
+		return vector_new(v.elem, b.cols, allocator)
+	}
+
+	if a.kind == .Float {
+		if op_result_type(a, matrix_elem_type(b), false) == t_invalid {
+			return t_invalid
+		}
+		return b
+	}
+
+	if b.kind == .Float {
+		if op_result_type(b, matrix_elem_type(a), false) == t_invalid {
+			return t_invalid
+		}
+		return a
+	}
+
+	return t_invalid
+}
+
+@(require_results)
+matrix_elem_type :: proc(t: ^Type) -> ^Type {
+	return t.variant.(^Matrix).col_type.elem
+}
+
+@(require_results)
+vector_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Vector {
+	assert(elem      != nil)
+	assert(elem.size != 0)
+
+	type := new(.Vector, Vector, allocator)
+	type.elem  = elem
+	type.count = count
+	type.size  = count * elem.size
+	type.align = elem.align
+
+	return type
+}
+
+@(require_results)
+matrix_new :: proc(col_type: ^Vector, cols: int, allocator: mem.Allocator) -> ^Matrix {
+	assert(col_type      != nil)
+	assert(col_type.size != 0)
+
+	type         := new(.Matrix, Matrix, allocator)
+	type.col_type = col_type
+	type.cols     = cols
+	type.size     = cols * col_type.size
+	type.align    = col_type.align
+
+	return type
+}
+
+@(require_results)
+is_comparable :: proc(type: ^Type) -> bool{
+	#partial switch type.kind {
+	case .Proc, .Tuple:
+		return false
+	}
+	return true
+}
+
+@(require_results)
+operator_applicable :: proc(type: ^Type, op: tokenizer.Token_Kind) -> bool {
+	if is_comparable(type) && (op == .Equal || op == .Not_Equal) {
+		return true
+	}
+
+	if is_numeric(type) {
+		#partial switch op {
+		case .Less, .Less_Equal, .Greater, .Greater_Equal:
+			return true
+		case .Add, .Subtract, .Multiply, .Divide:
+			return true
+		}
+	}
+
+	#partial switch type.kind {
+	case .Int, .Uint:
+		#partial switch op {
+		case .Modulo, .Modulo_Floored:
+			return true
+		case .Bit_Or, .Bit_And, .Xor, .Shift_Left, .Shift_Right:
+			return true
+		}
+	case .Bool:
+		#partial switch op {
+		case .Not, .And, .Or:
+			return true
+		}
+	case .Vector:
+		return operator_applicable(type.variant.(^Vector).elem, op)
+	case .Matrix:
+		return operator_applicable(type.variant.(^Matrix).col_type.elem, op)
+	}
+
+	return false
 }

@@ -29,7 +29,7 @@ compile_shader :: proc(
 	}
 
 	checker: Checker
-	errors = check(&checker, stmts, context.temp_allocator, error_allocator)
+	checker, errors = check(stmts, context.temp_allocator, error_allocator)
 	if len(errors) != 0 {
 		return
 	}

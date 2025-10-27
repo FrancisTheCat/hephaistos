@@ -5,16 +5,19 @@ import "base:runtime"
 
 import "core:fmt"
 import "core:mem"
+import "core:reflect"
 
 import "ast"
 import "tokenizer"
 import "types"
+import spv "spirv-odin"
 
 Checker :: struct {
 	scope:           ^Scope,
 	allocator:       runtime.Allocator,
 	errors:          [dynamic]tokenizer.Error,
 	error_allocator: runtime.Allocator,
+	shader_stage:    ast.Shader_Stage,
 }
 
 Addressing_Mode :: enum {
@@ -177,13 +180,13 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 			if value.type.kind == .Tuple {
 				for type in value.type.variant.(^types.Struct).fields {
-					if types.op_result_type(type.type, proc_type.returns[return_index].type).kind == .Invalid {
+					if !types.implicitly_castable(type.type, proc_type.returns[return_index].type) {
 						error(checker, value, "mismatched type in return statement: %v vs %v", proc_type.returns[return_index].type, type.type)
 					}
 					return_index += 1
 				}
 			} else {
-				if types.op_result_type(value.type, proc_type.returns[return_index].type).kind == .Invalid {
+				if !types.implicitly_castable(value.type, proc_type.returns[return_index].type) {
 					error(checker, value, "mismatched type in return statement: %v vs %v", proc_type.returns[return_index].type, value.type)
 				}
 				return_index += 1
@@ -302,7 +305,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			defer scope_pop(checker)
 
 			value := check_expr(checker, c.value)
-			if types.op_result_type(value.type, cond.type).kind == .Invalid {
+			if !types.implicitly_castable(value.type, cond.type) {
 				error(checker, value, "type of case value does not match selector type: %v vs %v", cond.type, value.type)
 			}
 			check_stmt_list(checker, c.body)
@@ -334,20 +337,19 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 						lhs_i += 1
 						continue
 					}
-					result_type := types.op_result_type(lhs[lhs_i].type, field.type)
-					if result_type.kind == .Invalid {
+					if !types.implicitly_castable(field.type, lhs[lhs_i].type) {
 						error(checker, v, "mismatched types in assign statement: %v vs %v", lhs[lhs_i].type, field.type)
 					}
-					v.types[lhs_i] = result_type
-					lhs_i += 1
+					v.types[lhs_i] = types.op_result_type(lhs[lhs_i].type, field.type, false)
+					lhs_i         += 1
 				}
 			} else {
 				if lhs_i >= len(lhs) {
 					lhs_i += 1
 					continue
 				}
-				result_type := types.op_result_type(lhs[lhs_i].type, r.type)
-				if result_type.kind == .Invalid {
+				result_type := types.op_result_type(lhs[lhs_i].type, r.type, false)
+				if !types.implicitly_castable(r.type, lhs[lhs_i].type) {
 					error(checker, v, "mismatched types in assign statement: %v vs %v", lhs[lhs_i].type, r.type)
 				} else if types.is_float(result_type) && types.is_integer(r.type) {
 					v.rhs[rhs_i].const_value = f64(v.rhs[rhs_i].const_value.(i64))
@@ -367,6 +369,9 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		}
 
 	case ^ast.Decl_Value:
+		// if !v.mutable {
+		// 	break
+		// }
 		names  := make([]tokenizer.Token, len(v.lhs))
 		values := make([]Operand,         len(v.values))
 
@@ -423,7 +428,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				}
 			case:
 				found: bool
-				for name in ast.shader_kind_names {
+				for name in ast.shader_stage_names {
 					if name == a.ident.text {
 						found = true
 						break
@@ -493,7 +498,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 							type = types.default_type(type)
 						}
 					} else {
-						if types.op_result_type(explicit_type, field.type).kind == .Invalid {
+						if !types.implicitly_castable(field.type, explicit_type) {
 							error(checker, stmt, "mismatched types in value declaration: %v vs %v", explicit_type, field.type)
 						}
 					}
@@ -523,7 +528,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 						type = types.default_type(type)
 					}
 				} else {
-					if types.op_result_type(explicit_type, r.type).kind == .Invalid {
+					if !types.implicitly_castable(r.type, explicit_type) {
 						error(checker, stmt, "mismatched types in value declaration: %v vs %v", explicit_type, r.type)
 					}
 					if types.is_float(explicit_type) {
@@ -547,7 +552,181 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 	return
 }
 
+check_const_decl :: proc(checker: ^Checker, v: ^ast.Decl_Value) {
+	if v.mutable {
+		return
+	}
+
+	names  := make([]tokenizer.Token, len(v.lhs))
+	values := make([]Operand,         len(v.values))
+
+	seen := make(map[string]struct{})
+	for a in v.attributes {
+		if a.ident.text in seen {
+			error(checker, a.ident, "duplicate attribute: '%v'", a.ident.text)
+		}
+		seen[a.ident.text] = {}
+
+		switch a.ident.text {
+		case "uniform":
+			if !v.mutable {
+				error(checker, a.ident, "'uniform' attribute can not be applied to a constant")
+			}
+		case "push_constant":
+			if !v.mutable {
+				error(checker, a.ident, "'push_constant' attribute can not be applied to a constant")
+			}
+		case "binding":
+			if !v.mutable {
+				error(checker, a.ident, "'binding' attribute can not be applied to a constant")
+			}
+		case "descriptor_set":
+			if !v.mutable {
+				error(checker, a.ident, "'descriptor_set' attribute can not be applied to a constant")
+			}
+		case "link_name":
+			if a.value == nil {
+				error(checker, a.ident, "'link_name' attribute requires a value")
+				break
+			}
+			value := check_expr(checker, a.value)
+			if val, ok := value.value.(string); ok {
+				v.link_name = val
+			} else {
+				error(checker, value, "'descriptor_set' attribute value must be a constant string")
+			}
+		case:
+			found: bool
+			for name in ast.shader_stage_names {
+				if name == a.ident.text {
+					found = true
+					break
+				}
+			}
+			if !found {
+				error(checker, a.ident, "unknown attribute '%s' in value declaration", a.ident.text)
+			}
+		}
+	}
+
+	for &name, i in names {
+		if ident, ok := v.lhs[i].derived_expr.(^ast.Expr_Ident); ok {
+			name = ident.ident
+		} else {
+			error(checker, v.lhs[i], "left hand side of declaration must be an identifier")
+		}
+	}
+	for &values, i in values {
+		values = check_expr_or_type(checker, v.values[i], v.attributes)
+	}
+
+	v.types = make([]^types.Type, len(v.lhs))
+
+	if len(values) == 0 {
+		type := check_type(checker, v.type_expr)
+		for name in names {
+			entity_kind := Entity_Kind.Var
+			scope_insert_entity(checker, entity_new(entity_kind, name, type, decl = v, allocator = checker.allocator))
+		}
+		for &t in v.types {
+			t = type
+		}
+		return
+	}
+
+	explicit_type: ^types.Type
+	if v.type_expr != nil {
+		explicit_type = check_type(checker, v.type_expr)
+	}
+
+	name_i := 0
+	check_decl_types: for &r in values {
+		if r.type.kind == .Tuple {
+			for field in r.type.variant.(^types.Struct).fields {
+				if name_i >= len(names) {
+					name_i += 1
+					continue
+				}
+				name        := names[name_i]
+				entity_kind := Entity_Kind.Var
+				if !v.mutable {
+					entity_kind = .Const
+					if r.mode == .Type {
+						entity_kind = .Type
+					}
+				}
+
+				type := explicit_type
+				if type == nil {
+					type = field.type
+					if entity_kind != .Const {
+						type = types.default_type(type)
+					}
+				} else {
+					if !types.implicitly_castable(field.type, explicit_type) {
+						error(checker, v, "mismatched types in value declaration: %v vs %v", explicit_type, field.type)
+					}
+				}
+				v.types[name_i] = type
+
+				scope_insert_entity(checker, entity_new(entity_kind, name, type, decl = v, allocator = checker.allocator))
+				name_i += 1
+			}
+		} else {
+			if name_i >= len(names) {
+				name_i += 1
+				continue
+			}
+			name        := names[name_i]
+			entity_kind := Entity_Kind.Var
+			if !v.mutable {
+				entity_kind = .Const
+				if r.mode == .Type {
+					entity_kind = .Type
+				}
+			}
+
+			type := explicit_type
+			if type == nil {
+				type = r.type
+				if entity_kind != .Const {
+					type = types.default_type(type)
+				}
+			} else {
+				if !types.implicitly_castable(r.type, explicit_type) {
+					error(checker, v, "mismatched types in value declaration: %v vs %v", explicit_type, r.type)
+				}
+				if types.is_float(explicit_type) {
+					if types.is_integer(r.type) {
+						r.expr.const_value = f64(r.expr.const_value.(i64))
+					}
+				}
+			}
+			v.types[name_i] = type
+
+			scope_insert_entity(checker, entity_new(entity_kind, name, type, decl = v, allocator = checker.allocator))
+			name_i += 1
+		}
+	}
+	if name_i != len(names) {
+		error(checker, v, "assignment count mismatch: %v vs %v", len(names), name_i)
+	}
+}
+
+check_const_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) {
+	decl, ok := stmt.derived_stmt.(^ast.Decl_Value)
+	if !ok || decl.mutable {
+		return
+	}
+
+	check_const_decl(checker, decl)
+}
+
 check_stmt_list :: proc(checker: ^Checker, stmts: []^ast.Stmt) -> (diverging: bool) {
+	// for stmt in stmts {
+	// 	check_const_stmt(checker, stmt)
+	// }
+
 	for stmt, i in stmts {
 		d := check_stmt(checker, stmt)
 		if d && !diverging && i != len(stmts) - 1 {
@@ -587,14 +766,13 @@ checker_init :: proc(
 }
 
 check :: proc(
-	checker: ^Checker,
-	stmts:   []^ast.Stmt,
+	stmts: []^ast.Stmt,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
-) -> []tokenizer.Error {
-	checker_init(checker, allocator, error_allocator)
-	check_stmt_list(checker, stmts)
-	return checker.errors[:]
+) -> (checker: Checker, errors: []tokenizer.Error) {
+	checker_init(&checker, allocator, error_allocator)
+	check_stmt_list(&checker, stmts)
+	return checker, checker.errors[:]
 }
 
 op_is_relation :: proc(token_kind: tokenizer.Token_Kind) -> bool {
@@ -746,52 +924,70 @@ evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: types.Const_Value,
 }
 
 check_proc_type :: proc(checker: ^Checker, p: $T) -> ^types.Proc {
-	args    := make([dynamic]types.Field, 0, len(p.args))
-	returns := make([dynamic]types.Field, 0, len(p.returns))
+	check_field_list :: proc(checker: ^Checker, fields: []ast.Field, usage: string) -> (out_fields: [dynamic]types.Field) {
+		reserve(&out_fields, len(fields))
 
-	for arg in p.args {
-		type := check_type(checker, arg.type)
-		if arg.value != nil {
-			value := check_expr(checker, arg.value)
-			if types.op_result_type(type, value.type).kind == .Invalid {
-				error(
-					checker,
-					arg.ident.location,
-					arg.value.end,
-					"default value type does not match declared type: %p vs %p",
-					type,
-					value.type,
-				)
+		locations          := make(map[int]tokenizer.Token, context.temp_allocator)
+		explicit_locations := false
+
+		for field, i in fields {
+			type := check_type(checker, field.type)
+			if field.value != nil {
+				value := check_expr(checker, field.value)
+				if !types.implicitly_castable(value.type, type) {
+					error(
+						checker,
+						field.ident.location,
+						field.value.end,
+						"default value type does not match declared type: %v vs %v",
+						type,
+						value.type,
+					)
+				}
 			}
+
+			location := i
+			if field.location != nil {
+				// TODO: matrices with mutliple locations
+
+				loc := check_expr(checker, field.location)
+				if l, ok := loc.value.(i64); ok && l != -1 {
+					if i == 0 {
+						explicit_locations = true
+					}
+
+					if !explicit_locations {
+						error(checker, field.location, "location specifier have to be specified for either all or none of the %ss", usage)
+					}
+
+					// TODO: check for duplicates
+					location = int(l)
+
+					if prev, prev_found := locations[location]; prev_found {
+						error(checker, field.location, "duplicate location specifier: location %v is already used by '%s'", location, prev.text)
+					}
+					locations[location] = field.ident
+				} else {
+					error(checker, field.location, "location specifier has to be a constant integer")
+				}
+			} else {
+				if explicit_locations {
+					error(checker, field.ident, "location specifier have to be specified for either all or none of the %ss", usage)
+				}
+			}
+
+			append(&out_fields, types.Field {
+				name     = field.ident,
+				type     = type,
+				location = location,
+			})
 		}
 
-		append(&args, types.Field {
-			name = arg.ident,
-			type = type,
-		})
+		return
 	}
 
-	for ret in p.returns {
-		type := check_type(checker, ret.type)
-		if ret.value != nil {
-			value := check_expr(checker, ret.value)
-			if types.op_result_type(type, value.type).kind == .Invalid {
-				error(
-					checker,
-					ret.ident.location,
-					ret.value.end,
-					"default value type does not match declared type: %p vs %p",
-					type,
-					value.type,
-				)
-			}
-		}
-
-		append(&returns, types.Field {
-			name = ret.ident,
-			type = type,
-		})
-	}
+	args    := check_field_list(checker, p.args,    "input")
+	returns := check_field_list(checker, p.returns, "output")
 
 	t        := types.new(.Proc, types.Proc, checker.allocator)
 	t.args    = args[:]
@@ -837,12 +1033,17 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		lhs := check_expr(checker, v.lhs)
 		rhs := check_expr(checker, v.rhs)
 
-		operand.type = types.op_result_type(lhs.type, rhs.type)
+		operand.type = types.op_result_type(lhs.type, rhs.type, v.op == .Multiply)
 		if operand.type.kind == .Invalid {
 			error(checker, expr, "mismatched types in binary expression: %v vs %v", lhs.type, rhs.type)
 			operand.mode = .Invalid
 			return
 		}
+
+		if !types.operator_applicable(operand.type, v.op) {
+			error(checker, v, "operator %v is not defined in `%v %v %v`", tokenizer.to_string(v.op), lhs.type, tokenizer.to_string(v.op), rhs.type)
+		}
+
 		if types.is_float(operand.type) {
 			if types.is_integer(lhs.type) {
 				lhs.expr.const_value = f64(lhs.value.(i64))
@@ -884,11 +1085,33 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		case .Proc:
 		}
 
+	case ^ast.Expr_Builtin:
+		e, ok := reflect.enum_from_name(spv.BuiltIn, v.ident.text)
+		if !ok {
+			error(checker, v.ident, "unknown builtin: '%s'", v.ident.text)
+			return
+		}
+
+		if info, ok := builtin_infos[e]; ok {
+			switch info.usage[checker.shader_stage] {
+			case nil:
+				error(checker, v.ident, "builtin %s can not be used in %s", v.ident.text, ast.shader_stage_names[checker.shader_stage])
+			case .In:
+				operand.mode = .RValue
+			case .Out:
+				operand.mode = .LValue
+			}
+			operand.type = builtin_infos[e].type
+		} else {
+			error(checker, v.ident, "unknown builtin: '%s'", v.ident.text)
+			return
+		}
+
 	case ^ast.Expr_Proc_Lit:
-		shader_kind: ast.Shader_Kind
+		shader_stage: ast.Shader_Stage
 		for attribute in attributes {
-			s: ast.Shader_Kind
-			for name, kind in ast.shader_kind_names {
+			s: ast.Shader_Stage
+			for name, kind in ast.shader_stage_names {
 				if name == attribute.ident.text {
 					s = kind
 					break
@@ -897,18 +1120,19 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			if s == nil {
 				continue
 			}
-			if shader_kind != nil {
+			if shader_stage != nil {
 				error(
 					checker,
 					attribute.ident,
 					"the attributes %s and %s are mutually exclusive",
-					ast.shader_kind_names[shader_kind],
-					ast.shader_kind_names[s],
+					ast.shader_stage_names[shader_stage],
+					ast.shader_stage_names[s],
 				)
 			}
-			shader_kind = s
+			shader_stage = s
 		}
-		v.shader_kind = shader_kind
+		v.shader_stage       = shader_stage
+		checker.shader_stage = shader_stage
 
 		type := check_proc_type(checker, v)
 
@@ -965,13 +1189,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				return
 			}
 
-			type      := types.new(.Vector, types.Vector, checker.allocator)
-			type.count = len(v.selector.text)
-			type.elem  = lhs.type.variant.(^types.Vector).elem
-			type.size  = type.elem.size * type.count
-			type.align = type.elem.align
-
-			operand.type = type
+			operand.type = types.vector_new(lhs.type.variant.(^types.Vector).elem, len(v.selector.text), checker.allocator)
 			operand.mode = lhs.mode
 			return
 		}
@@ -1001,7 +1219,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		if fn.mode == .Type {
 			v.is_cast = true
 			if len(v.args) != 1 {
-				error(checker, v, "expected exactly one argument to function call syntax type cast, but got %d", len(v.args))
+				error(checker, v, "too many arguments in cast to %v", fn.type)
 				return
 			}
 			value := check_expr(checker, v.args[0].value)
@@ -1026,14 +1244,14 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 
 				if value.type.kind == .Tuple {
-					for type in value.type.variant.(^types.Struct).fields {
-						if types.op_result_type(type.type, proc_type.args[arg_index].type).kind == .Invalid {
+					for field_type in value.type.variant.(^types.Struct).fields {
+						if !types.implicitly_castable(field_type.type, proc_type.args[arg_index].type) {
 							error(checker, value, "mismatched type in at argument %d: %v vs %v", arg_index, proc_type.args[arg_index].type, value.type)
 						}
 						arg_index += 1
 					}
 				} else {
-					if types.op_result_type(value.type, proc_type.args[arg_index].type).kind == .Invalid {
+					if !types.implicitly_castable(value.type, proc_type.args[arg_index].type) {
 						error(checker, value, "mismatched type in at argument %d: %v vs %v", arg_index, proc_type.args[arg_index].type, value.type)
 					}
 					arg_index += 1
@@ -1087,8 +1305,6 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		operand.type = expr.type
 
 	case ^ast.Type_Matrix:
-		type := types.new(.Matrix, types.Matrix, checker.allocator)
-
 		rows := check_expr(checker, v.rows)
 		if rows.mode != .Const || (rows.type.kind != .Int && rows.type.kind != .Uint) {
 			error(checker, rows, "expected a constant integer")
@@ -1105,35 +1321,16 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			}
 		}
 
-		col_type      := types.new(.Vector, types.Vector, checker.allocator)
-		col_type.count = int(rows.value.(i64) or_else 0)
-		col_type.elem  = types.default_type(check_type(checker, v.elem))
-		col_type.size  = col_type.elem.size * col_type.count
-		col_type.align = col_type.elem.align
-
-		type.col_type = col_type
-		type.col_type = col_type
-
-		type.cols  = cols
-		type.size  = col_type.size * type.cols
-		type.align = col_type.align
-
-		operand.type = type
+		col_type    := types.vector_new(types.default_type(check_type(checker, v.elem)), int(rows.value.(i64) or_else 0), checker.allocator)
+		operand.type = types.matrix_new(col_type, cols, checker.allocator)
 		operand.mode = .Type
 	case ^ast.Type_Array:
-		type := types.new(.Vector, types.Vector, checker.allocator)
-
 		count := check_expr(checker, v.count)
 		if count.mode != .Const || (count.type.kind != .Int && count.type.kind != .Uint) {
 			error(checker, count, "expected a constant integer as the count of an array")
 		}
 
-		type.count = int(count.value.(i64) or_else 0)
-		type.elem  = types.default_type(check_type(checker, v.elem))
-		type.size  = type.elem.size * type.count
-		type.align = type.elem.align
-
-		operand.type = type
+		operand.type = types.vector_new(types.default_type(check_type(checker, v.elem)), int(count.value.(i64) or_else 0), checker.allocator)
 		operand.mode = .Type
 	case ^ast.Type_Struct:
 		operand.mode = .Type

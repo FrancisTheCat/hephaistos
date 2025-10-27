@@ -45,10 +45,10 @@ Expr_Unary :: struct {
 }
 
 Const_Value :: union {
-		bool,
-		i64,
-		f64,
-	}
+	bool,
+	i64,
+	f64,
+}
 
 Expr_Constant :: struct {
 	using node: Expr,
@@ -60,8 +60,14 @@ Expr_Ident :: struct {
 	ident:      tokenizer.Token,
 }
 
-Shader_Kind :: enum {
-	Vertex = 1,
+Expr_Builtin :: struct {
+	using node: Expr,
+	ident:      tokenizer.Token,
+}
+
+Shader_Stage :: enum {
+	Invalid = 0,
+	Vertex,
 	Fragment,
 	Geometry,
 	Tesselation,
@@ -69,7 +75,8 @@ Shader_Kind :: enum {
 }
 
 @(rodata)
-shader_kind_names: [Shader_Kind]string = {
+shader_stage_names: [Shader_Stage]string = {
+	.Invalid     = "<invalid>",
 	.Vertex      = "vertex_shader",
 	.Fragment    = "fragment_shader",
 	.Geometry    = "geometry_shader",
@@ -78,11 +85,11 @@ shader_kind_names: [Shader_Kind]string = {
 }
 
 Expr_Proc_Lit :: struct {
-	using node:  Expr,
-	args:        []Field,
-	returns:     []Field,
-	body:        []^Stmt,
-	shader_kind: Shader_Kind,
+	using node:   Expr,
+	args:         []Field,
+	returns:      []Field,
+	body:         []^Stmt,
+	shader_stage: Shader_Stage,
 }
 
 Expr_Proc_Sig :: struct {
@@ -247,6 +254,7 @@ Any_Node :: union {
 	^Expr_Index,
 	^Expr_Cast,
 	^Expr_Unary,
+	^Expr_Builtin,
 
 	^Type_Struct,
 	^Type_Array,
@@ -279,6 +287,7 @@ Any_Expr :: union {
 	^Expr_Index,
 	^Expr_Cast,
 	^Expr_Unary,
+	^Expr_Builtin,
 	
 	^Type_Struct,
 	^Type_Array,
@@ -324,7 +333,8 @@ new :: proc($T: typeid, start, end: tokenizer.Location, allocator: mem.Allocator
 }
 
 Field :: struct {
-	ident:  tokenizer.Token,
-	type:  ^Expr,
-	value: ^Expr,
+	ident:    tokenizer.Token,
+	type:     ^Expr,
+	value:    ^Expr,
+	location: ^Expr,
 }

@@ -31,6 +31,7 @@ Token_Kind :: enum u16 {
 	Question_Mark = '?',
 	Attribute     = '@',
 	Directive     = '#',
+	Dollar        = '$',
 
 	// avoid enum value collision
 	Ident = 128,
@@ -318,7 +319,7 @@ tokenize :: proc(
 				token.kind = Token_Kind(char)
 			}
 			
-		case ':', ';', '(', ')', '{', '}', '[', ']', ',', '?', '#', '@':
+		case ':', ';', '(', ')', '{', '}', '[', ']', ',', '?', '#', '@', '$':
 			token.kind = Token_Kind(char)
 
 		case '"':
@@ -505,6 +506,7 @@ token_strings := #sparse[Token_Kind]string {
 	.Question_Mark  = "?",
 	.Attribute      = "@",
 	.Directive      = "#",
+	.Dollar         = "$",
 
 	.Ident   = "identifier",
 
