@@ -1662,6 +1662,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		type, ok := checker.shared_types[v.ident.text]
 		if !ok {
 			error(checker, v.ident, "unknown shared type: %s", v.ident.text)
+			return
 		}
 		operand.type = type
 		operand.mode = .Type
