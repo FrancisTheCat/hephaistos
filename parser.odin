@@ -169,7 +169,7 @@ parse_proc_signature :: proc(parser: ^Parser) -> (args, returns: []ast.Field, ok
 			returns = parse_field_list(parser, .Close_Paren, true, true) or_return
 		} else {
 			returns         = make([]ast.Field, 1, parser.allocator)
-			returns[0].type = parse_expr(parser) or_return
+			returns[0].type = parse_expr(parser, allow_compound_literals = false) or_return
 		}
 	}
 

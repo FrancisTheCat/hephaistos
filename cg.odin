@@ -83,7 +83,7 @@ CG_Scope :: struct {
 	entities:     map[string]CG_Entity,
 	label:        string,
 	label_id:     spv.Id,
-	return_value: spv.Id,
+	return_value: spv.Id, // 0 when the return values a shader stage outputs
 	return_type:  ^types.Type,
 	outputs:      []spv.Id,
 }
@@ -608,7 +608,6 @@ cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
 			cg_insert_entity(ctx, p.args[i].ident.text, nil, arg.type, id)
 		}
 		spv.OpLabel(&ctx.functions)
-		return_value: spv.Id
 		if len(type.returns) != 0 {
 			return_value = spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, return_type_info, .Function), .Function, cg_nil_value(ctx, return_type_info))
 			spv.OpName(&ctx.debug_b, return_value, "$return_tuple")
@@ -958,7 +957,6 @@ cg_expr :: proc(
 	assert(expr      != nil)
 	assert(expr.type != nil)
 
-	// TODO: implicit broadcasting / scalar -> matrix conversions
 	value      = _cg_expr(ctx, builder, expr)
 	value.type = expr.type
 
@@ -1151,15 +1149,15 @@ _cg_expr :: proc(
 		if v.is_cast {
 			return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type), }
 		} else {
-			fn   := cg_expr(ctx, builder, v.lhs)
-			args := make([]spv.Id, len(v.args))
+			fn        := cg_expr(ctx, builder, v.lhs)
+			args      := make([]spv.Id, len(v.args))
+			proc_type := v.lhs.type.variant.(^types.Proc)
 			for &arg, i in args {
-				arg = cg_expr(ctx, builder, v.args[i].value).id
+				arg = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[i].value), proc_type.args[i].type)
 			}
 
 			return_type_info := cg_type(ctx, expr.type)
 			ret              := spv.OpFunctionCall(builder, return_type_info.type, fn.id, ..args)
-			proc_type        := v.lhs.type.variant.(^types.Proc)
 
 			if len(proc_type.returns) == 1 {
 				type_info := cg_type(ctx, proc_type.returns[0].type)
@@ -1309,34 +1307,37 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 	switch v in stmt.derived_stmt {
 	case ^ast.Stmt_Return:
 		if len(v.values) == 0 {
-			value := cg_lookup_return_value(ctx)
-			if value != 0 {
-				spv.OpReturnValue(builder, value)
+			proc_scope  := cg_lookup_proc_scope(ctx)
+			return_type := cg_type(ctx, proc_scope.return_type)
+			if proc_scope.return_value != 0 {
+				spv.OpReturnValue(builder, spv.OpLoad(builder, return_type.type, proc_scope.return_value))
 			} else {
 				spv.OpReturn(builder)
 			}
-		} else {
-			proc_scope   := cg_lookup_proc_scope(ctx)
-			return_value := proc_scope.return_value
-			type         := proc_scope.return_type.variant.(^types.Struct)
-
-			if return_value == 0 {
-				for value, i in v.values {
-					v   := cg_expr(ctx, builder, value)
-					ptr := proc_scope.outputs[i]
-					spv.OpStore(builder, ptr, v.id)
-				}
-				spv.OpReturn(builder)
-			} else {
-				return_ti := cg_type(ctx, type)
-				for value, i in v.values {
-					v   := cg_expr(ctx, builder, value)
-					ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, type.fields[i].type, .Function), return_value, cg_constant(ctx, i64(i)).id)
-					spv.OpStore(builder, ptr, v.id)
-				}
-				spv.OpReturnValue(builder, spv.OpLoad(builder, return_ti.type, return_value))
-			}
+			return true
 		}
+
+		proc_scope   := cg_lookup_proc_scope(ctx)
+		return_value := proc_scope.return_value
+		type         := proc_scope.return_type.variant.(^types.Struct)
+
+		if return_value == 0 {
+			for value, i in v.values {
+				v   := cg_expr(ctx, builder, value)
+				ptr := proc_scope.outputs[i]
+				spv.OpStore(builder, ptr, v.id)
+			}
+			spv.OpReturn(builder)
+		} else {
+			return_ti := cg_type(ctx, type)
+			for value, i in v.values {
+				v   := cg_expr(ctx, builder, value)
+				ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, type.fields[i].type, .Function), return_value, cg_constant(ctx, i64(i)).id)
+				spv.OpStore(builder, ptr, cg_cast(ctx, builder, v, type.fields[i].type))
+			}
+			spv.OpReturnValue(builder, spv.OpLoad(builder, return_ti.type, return_value))
+		}
+
 		return true
 	case ^ast.Stmt_Break:
 		unimplemented()

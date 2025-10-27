@@ -50,14 +50,14 @@ compile_shader :: proc(
 		return
 	}
 
-	VS_Constants :: struct {
+	Vertex_Shader_Constants :: struct {
 		view:       matrix[4, 4]f32,
 		projection: matrix[4, 4]f32,
 		model:      matrix[4, 4]f32,
 	}
 
 	checker: Checker
-	checker, errors = check(stmts, { VS_Constants, }, context.temp_allocator, error_allocator)
+	checker, errors = check(stmts, { Vertex_Shader_Constants, }, context.temp_allocator, error_allocator)
 	if len(errors) != 0 {
 		return
 	}
