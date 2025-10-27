@@ -451,8 +451,14 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				error(checker, v.lhs[i], "variable declaration must be an identifier")
 			}
 		}
+
+		explicit_type: ^types.Type
+		if v.type_expr != nil {
+			explicit_type = check_type(checker, v.type_expr)
+		}
+
 		for &values, i in values {
-			values = check_expr_or_type(checker, v.values[i], stmt.attributes)
+			values = check_expr_or_type(checker, v.values[i], stmt.attributes, explicit_type)
 		}
 
 		v.types = make([]^types.Type, len(v.lhs), checker.allocator)
@@ -467,11 +473,6 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				t = type
 			}
 			return
-		}
-
-		explicit_type: ^types.Type
-		if v.type_expr != nil {
-			explicit_type = check_type(checker, v.type_expr)
 		}
 
 		name_i := 0
@@ -1136,7 +1137,7 @@ check_proc_type :: proc(checker: ^Checker, p: $T) -> ^types.Proc {
 	return t
 }
 
-check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field) -> (operand: Operand) {
+check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field, type_hint: ^types.Type = nil) -> (operand: Operand) {
 	operand.expr = expr
 
 	defer {
@@ -1397,7 +1398,133 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			operand.is_call = true
 		}
 	case ^ast.Expr_Compound:
-		// TODO
+		type := type_hint
+		if type == nil {
+			type = check_type(checker, v.type_expr)
+		}
+		if type == nil {
+			error(checker, v, "missing type in compound literal")
+			return
+		}
+		v.type = type
+
+		operand.type = type
+		operand.mode = .RValue
+		if len(v.fields) == 0 { // {}
+			return
+		}
+
+		named: bool
+		for f, i in v.fields {
+			if i == 0 {
+				named = len(f.ident.text) != 0
+			}
+			if named != (len(f.ident.text) != 0) {
+				error(checker, f.value, "mixture of 'field = value' and value elements is not allowed")
+			}
+		}
+		v.named = named
+
+		#partial switch type.kind {
+		case .Struct:
+			type := type.variant.(^types.Struct)
+
+			if named {
+				seen := make(map[string]struct{}, context.temp_allocator)
+				for field in v.fields {
+					if field.ident.text in seen {
+						error(checker, field.ident, "duplicate values in compound literal: %v", field.ident.text)
+					}
+					seen[field.ident.text] = {}
+
+					find_struct_field :: proc(type: ^types.Struct, name: string) -> ^types.Field {
+						for &field in type.fields {
+							if field.name.text == name {
+								return &field
+							}
+						}
+						return nil
+					}
+
+					struct_field := find_struct_field(type, field.ident.text)
+					if struct_field == nil {
+						error(checker, field.ident, "struct type %v has no field %s", type, field.ident.text)
+						continue
+					}
+
+					field_operand := check_expr(checker, field.value, type_hint = struct_field.type)
+					if !types.implicitly_castable(field_operand.type, struct_field.type) {
+						error(checker, field.value, "expected value of type %v but got %v", struct_field.type, field_operand.type)
+						return
+					}
+				}
+			} else {
+				if len(v.fields) != len(type.fields) {
+					error(checker, v, "expected %d values in compound literal but got %d", len(type.fields), len(v.fields))
+					return
+				}
+
+				for field, i in v.fields {
+					struct_field := type.fields[i]
+
+					field_operand := check_expr(checker, field.value, type_hint = struct_field.type)
+					if !types.implicitly_castable(field_operand.type, struct_field.type) {
+						error(checker, field.value, "expected value of type %v but got %v", struct_field.type, field_operand.type)
+						return
+					}
+				}
+			}
+		case .Vector:
+			type := type.variant.(^types.Vector)
+			if named {
+				error(checker, v, "named values are not supported for vector literals")
+				return
+			}
+
+			n_values := 0
+			for field in v.fields {
+				f := check_expr(checker, field.value, type_hint = type.elem)
+				t := f.type
+				if types.is_vector(f.type) {
+					v        := f.type.variant.(^types.Vector)
+					t         = v.elem
+					n_values += v.count
+				} else {
+					n_values += 1
+				}
+				if !types.implicitly_castable(t, type.elem) {
+					error(checker, field.value, "expected value of type %v but got %v", type.elem, f.type)
+					return
+				}
+			}
+
+			if n_values != type.count {
+				error(checker, v, "expected %d values in compound literal but got %d", type.count, len(v.fields))
+				return
+			}
+		case .Matrix:
+			type := type.variant.(^types.Matrix)
+			if named {
+				error(checker, v, "named values are not supported for matrix literals")
+				return
+			}
+			if len(v.fields) != type.col_type.count * type.cols {
+				error(checker, v, "expected %d values in compound literal but got %d", type.col_type.count * type.cols, len(v.fields))
+				return
+			}
+			for field in v.fields {
+				f := check_expr(checker, field.value, type_hint = type.col_type.elem)
+				if !types.implicitly_castable(f.type, type.col_type.elem) {
+					error(checker, field.value, "expected value of type %v but got %v", type.col_type.elem, f.type)
+					return
+				}
+			}
+		case:
+			error(checker, v, "illegal type in compound literal: %v", type)
+		}
+
+		return
+
 	case ^ast.Expr_Index:
 		lhs := check_expr(checker, v.lhs)
 		rhs := check_expr(checker, v.rhs)
@@ -1543,8 +1670,8 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 	return
 }
 
-check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}) -> (operand: Operand) {
-	operand = check_expr_internal(checker, expr, attributes)
+check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}, type_hint: ^types.Type = nil) -> (operand: Operand) {
+	operand = check_expr_internal(checker, expr, attributes, type_hint)
 	switch operand.mode {
 	case .RValue, .LValue, .Const, .Type:
 		return
@@ -1561,8 +1688,8 @@ check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast
 	return
 }
 
-check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}) -> (operand: Operand) {
-	operand = check_expr_internal(checker, expr, attributes)
+check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}, type_hint: ^types.Type = nil) -> (operand: Operand) {
+	operand = check_expr_internal(checker, expr, attributes, type_hint)
 	switch operand.mode {
 	case .RValue, .LValue, .Const:
 		return

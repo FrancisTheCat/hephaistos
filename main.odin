@@ -9,7 +9,6 @@ import "core:os"
 import "core:prof/spall"
 import "core:strings"
 import "core:slice"
-import "core:time"
 import "core:terminal/ansi"
 
 import "ast"
@@ -39,9 +38,6 @@ compile_shader :: proc(
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (code: []u32, errors: []tokenizer.Error) {
-	start := time.now()
-	defer fmt.println(time.since(start))
-
 	tokens: []tokenizer.Token
 	tokens, errors = tokenizer.tokenize(source, false, context.temp_allocator, error_allocator)
 	if len(errors) != 0 {

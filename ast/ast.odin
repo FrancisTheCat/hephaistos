@@ -65,11 +65,6 @@ Expr_Builtin :: struct {
 	ident:      tokenizer.Token,
 }
 
-Type_Import :: struct {
-	using node: Expr,
-	ident:      tokenizer.Token,
-}
-
 Shader_Stage :: enum {
 	Invalid = 0,
 	Vertex,
@@ -123,7 +118,9 @@ Expr_Selector :: struct {
 
 Expr_Compound :: struct {
 	using node: Expr,
+	type_expr: ^Expr,
 	fields:   []Field,
+	named:      bool,
 }
 
 Expr_Index :: struct {
@@ -154,6 +151,11 @@ Type_Matrix :: struct {
 	rows:      ^Expr,
 	cols:      ^Expr,
 	elem:      ^Expr,
+}
+
+Type_Import :: struct {
+	using node: Expr,
+	ident:      tokenizer.Token,
 }
 
 

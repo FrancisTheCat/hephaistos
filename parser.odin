@@ -210,13 +210,23 @@ parse_stmt_list :: proc(
 	}
 }
 
-parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
+parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr: ^ast.Expr, ok: bool) {
 	token := token_peek(parser) 
 	#partial switch token.kind {
 	case .Ident:
 		token_advance(parser)
 		expr := ast.new(ast.Expr_Ident, token.location, parser.end_location, parser.allocator)
 		expr.ident = token
+
+		if allow_compound_literals && token_peek(parser).kind == .Open_Brace {
+			token_advance(parser)
+			values := parse_arg_list(parser, .Close_Brace) or_return
+			comp   := ast.new(ast.Expr_Compound, token.location, parser.end_location, parser.allocator)
+			comp.fields    = values
+			comp.type_expr = expr
+			return comp, true
+		}
+
 		return expr, true
 
 	case .Dollar:
@@ -273,8 +283,16 @@ parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
 		token_advance(parser)
 		token_expect(parser, .Open_Brace) or_return
 		fields := parse_field_list(parser, .Close_Brace, false) or_return
-		s := ast.new(ast.Type_Struct, token.location, parser.end_location, parser.allocator)
+		s      := ast.new(ast.Type_Struct, token.location, parser.end_location, parser.allocator)
 		s.fields = fields
+		if allow_compound_literals && token_peek(parser).kind == .Open_Brace {
+			token_advance(parser)
+			values := parse_arg_list(parser, .Close_Brace) or_return
+			comp   := ast.new(ast.Expr_Compound, token.location, parser.end_location, parser.allocator)
+			comp.fields    = values
+			comp.type_expr = s
+			return comp, true
+		}
 		return s, true
 
 	case .Matrix:
@@ -293,6 +311,16 @@ parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
 		m.rows = rows
 		m.cols = cols
 		m.elem = elem
+
+		if allow_compound_literals && token_peek(parser).kind == .Open_Brace {
+			token_advance(parser)
+			values := parse_arg_list(parser, .Close_Brace) or_return
+			comp   := ast.new(ast.Expr_Compound, token.location, parser.end_location, parser.allocator)
+			comp.fields    = values
+			comp.type_expr = m
+			return comp, true
+		}
+
 		return m, true
 
 	case .Vector:
@@ -302,11 +330,21 @@ parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
 		token_expect(parser, .Open_Bracket) or_return
 		count := parse_expr(parser) or_return
 		token_expect(parser, .Close_Bracket) or_return
-		elem := parse_expr(parser) or_return
+		elem := parse_expr(parser, allow_compound_literals = false) or_return
 
 		a := ast.new(ast.Type_Array, token.location, parser.end_location, parser.allocator)
 		a.count = count
 		a.elem = elem
+
+		if allow_compound_literals && token_peek(parser).kind == .Open_Brace {
+			token_advance(parser)
+			values := parse_arg_list(parser, .Close_Brace) or_return
+			comp   := ast.new(ast.Expr_Compound, token.location, parser.end_location, parser.allocator)
+			comp.fields    = values
+			comp.type_expr = a
+			return comp, true
+		}
+
 		return a, true
 
 	case .Open_Paren:
@@ -319,7 +357,7 @@ parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
 
 	case .Add, .Subtract, .Xor:
 		token_advance(parser)
-		expr  := parse_atom_expr(parser) or_return
+		expr  := parse_expr(parser) or_return
 		unary := ast.new(ast.Expr_Unary, token.location, parser.end_location, parser.allocator)
 		unary.expr = expr
 		unary.op   = token.kind
@@ -378,8 +416,8 @@ binding_powers: map[tokenizer.Token_Kind]int = {
 	.Exponent = 7,
 }
 
-parse_expr :: proc(parser: ^Parser, min_power := 0) -> (expr: ^ast.Expr, ok: bool) {
-	lhs := parse_atom_expr(parser) or_return
+parse_expr :: proc(parser: ^Parser, min_power := 0, allow_compound_literals := true) -> (expr: ^ast.Expr, ok: bool) {
+	lhs := parse_atom_expr(parser, allow_compound_literals) or_return
 	for {
 		op := token_peek(parser)
 		#partial switch op.kind {
