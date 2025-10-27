@@ -296,9 +296,9 @@ implicitly_castable :: proc(from, to: ^Type) -> bool {
 }
 
 @(require_results)
-op_result_type :: proc(a, b: ^Type, is_multiply: bool) -> ^Type {
+op_result_type :: proc(a, b: ^Type, is_multiply: bool, allocator: mem.Allocator) -> ^Type {
 	if is_multiply && (is_matrix(a) || is_matrix(b)) {
-		return matrix_multiply_type(a, b)
+		return matrix_multiply_type(a, b, allocator)
 	}
 
 	if implicitly_castable(a, b) {
@@ -447,7 +447,7 @@ type_hash :: proc(type: ^Type) -> u64 {
 }
 
 @(require_results)
-matrix_multiply_type :: proc(a, b: ^Type, allocator := context.allocator) -> ^Type {
+matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 	if a == nil || b == nil {
 		return t_invalid
 	}
@@ -501,14 +501,14 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator := context.allocator) -> ^Ty
 	}
 
 	if a.kind == .Float {
-		if op_result_type(a, matrix_elem_type(b), false) == t_invalid {
+		if op_result_type(a, matrix_elem_type(b), false, {}) == t_invalid {
 			return t_invalid
 		}
 		return b
 	}
 
 	if b.kind == .Float {
-		if op_result_type(b, matrix_elem_type(a), false) == t_invalid {
+		if op_result_type(b, matrix_elem_type(a), false, {}) == t_invalid {
 			return t_invalid
 		}
 		return a
@@ -525,7 +525,7 @@ matrix_elem_type :: proc(t: ^Type) -> ^Type {
 @(require_results)
 vector_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Vector {
 	assert(elem      != nil)
-	assert(elem.size != 0)
+	// assert(elem.size != 0)
 
 	type := new(.Vector, Vector, allocator)
 	type.elem  = elem

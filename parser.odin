@@ -322,7 +322,20 @@ parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
 		expr  := parse_atom_expr(parser) or_return
 		unary := ast.new(ast.Expr_Unary, token.location, parser.end_location, parser.allocator)
 		unary.expr = expr
+		unary.op   = token.kind
 		return unary, true
+
+	case .Cast:
+		token_advance(parser)
+		token_expect(parser, .Open_Paren, "cast") or_return
+		type := parse_expr(parser) or_return
+		token_expect(parser, .Close_Paren) or_return
+		value := parse_expr(parser) or_return
+		c     := ast.new(ast.Expr_Cast, token.location, parser.end_location, parser.allocator)
+		c.type_expr = type
+		c.value     = value
+		return c, true
+
 	}
 
 	error(parser, token, "unexpected token")

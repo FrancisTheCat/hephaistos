@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:slice"
+import "core:mem"
 import "core:terminal/ansi"
 
 import "ast"
@@ -17,7 +18,7 @@ compile_shader :: proc(
 	error_allocator := context.allocator,
 ) -> (code: []u32, errors: []tokenizer.Error) {
 	tokens: []tokenizer.Token
-	tokens, errors = tokenizer.tokenize(source, false, context.allocator, error_allocator)
+	tokens, errors = tokenizer.tokenize(source, false, context.temp_allocator, error_allocator)
 	if len(errors) != 0 {
 		return
 	}
@@ -34,22 +35,36 @@ compile_shader :: proc(
 		return
 	}
 
-	code = cg_generate(&checker, stmts, allocator = context.allocator)
+	code = cg_generate(&checker, stmts, allocator = allocator)
 
 	return
 }
 
 main :: proc() {
+	when ODIN_DEBUG {
+		track: mem.Tracking_Allocator
+		mem.tracking_allocator_init(&track, context.allocator)
+		defer mem.tracking_allocator_destroy(&track)
+		context.allocator = mem.tracking_allocator(&track)
+
+		defer for _, leak in track.allocation_map {
+			fmt.printf("%v leaked %m\n", leak.location, leak.size)
+		}
+	}
+
 	user_formatters: map[typeid]fmt.User_Formatter
 	fmt.set_user_formatters(&user_formatters)
 	fmt.register_user_formatter(^types.Type, proc(fi: ^fmt.Info, arg: any, verb: rune) -> bool {
 		types.print_writer(fi.writer, arg.(^types.Type))
 		return true
 	})
+	defer delete(user_formatters)
 
 	file_name    := "test.hep"
 	source       := string(os.read_entire_file(file_name) or_else panic(""))
-	code, errors := compile_shader(source)
+	defer delete(source)
+	code, errors := compile_shader(source, error_allocator = context.temp_allocator)
+	defer delete(code)
 
 	if len(errors) != 0 {
 		lines := strings.split_lines(source, context.temp_allocator)

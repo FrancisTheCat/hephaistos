@@ -5,6 +5,8 @@ import "core:fmt"
 import "core:strconv"
 
 Token_Kind :: enum u16 {
+	Invalid       = 0,
+
 	Bit_And       = '&',
 	Bit_Or        = '|',
 	Xor           = '~',
@@ -479,6 +481,7 @@ tokenize :: proc(
 }
 
 token_strings := #sparse[Token_Kind]string {
+	.Invalid        = "<invalid>",
 	.Bit_And        = "&",
 	.Bit_Or         = "|",
 	.Xor            = "~",

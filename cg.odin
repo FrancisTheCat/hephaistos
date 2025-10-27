@@ -31,8 +31,8 @@ CG_Type_Info :: struct {
 
 Type_Hash_Entry :: struct {
 	hash:            u64,
-	type:            ^types.Type,
-	info:            CG_Type_Info,
+	type:           ^types.Type,
+	info:           ^CG_Type_Info,
 	explicit_layout: bool,
 }
 
@@ -76,6 +76,7 @@ CG_Value :: struct {
 	id:            spv.Id,
 	storage_class: CG_Storage_Class,
 	type:         ^types.Type,
+	swizzle:       string,
 }
 
 CG_Scope :: struct {
@@ -150,12 +151,12 @@ register_type :: proc(registry: ^Type_Registry, t: ^types.Type, explicit_layout:
 	entry := &registry[hash % u64(len(registry))]
 	for &e in entry {
 		if e.type == t && (t.kind != .Struct || e.explicit_layout == explicit_layout) {
-			return &e.info, true
+			return e.info, true
 		}
 	}
 	for &e in entry {
 		if (t.kind != .Struct || e.explicit_layout == explicit_layout) && e.hash == hash && types.equal(t, e.type) {
-			return &e.info, true
+			return e.info, true
 		}
 	}
 	append(entry, Type_Hash_Entry {
@@ -163,7 +164,11 @@ register_type :: proc(registry: ^Type_Registry, t: ^types.Type, explicit_layout:
 		type            = t,
 		explicit_layout = explicit_layout,
 	})
-	return &entry[len(entry) - 1].info, false
+
+	type_info                  = new(CG_Type_Info)
+	entry[len(entry) - 1].info = type_info
+
+	return
 }
 
 cg_string :: proc(ctx: ^CG_Context, str: string) -> spv.Id {
@@ -245,6 +250,9 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 					id := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
 					if !global {
 						init := cg_expr(ctx, value_builder, value)
+						if v.type_expr != nil && !types.equal(init.type, v.type_expr.type) {
+							init.id = cg_cast(ctx, builder, init, v.type_expr.type)
+						}
 						spv.OpStore(value_builder, id, init.id)
 					}
 					name := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
@@ -685,7 +693,7 @@ cg_expr_binary :: proc(
 	type_info := cg_type(ctx, type)
 
 	if op_is_relation(op) {
-		t := types.op_result_type(lhs_type, rhs_type, false)
+		t := types.op_result_type(lhs_type, rhs_type, false, {})
 		#partial switch t.kind {
 		case .Int:
 			#partial switch op {
@@ -756,6 +764,12 @@ cg_expr_binary :: proc(
 			return spv.OpSDiv(builder, type_info.type, lhs, rhs)
 		case .Modulo:
 			return spv.OpSMod(builder, type_info.type, lhs, rhs)
+		case .Bit_Or:
+			return spv.OpBitwiseOr(builder, type_info.type, lhs, rhs)
+		case .Bit_And:
+			return spv.OpBitwiseAnd(builder, type_info.type, lhs, rhs)
+		case .Xor:
+			return spv.OpBitwiseXor(builder, type_info.type, lhs, rhs)
 		}
 	case .Uint:
 		#partial switch op {
@@ -769,6 +783,12 @@ cg_expr_binary :: proc(
 			return spv.OpUDiv(builder, type_info.type, lhs, rhs)
 		case .Modulo:
 			return spv.OpUMod(builder, type_info.type, lhs, rhs)
+		case .Bit_Or:
+			return spv.OpBitwiseOr(builder, type_info.type, lhs, rhs)
+		case .Bit_And:
+			return spv.OpBitwiseAnd(builder, type_info.type, lhs, rhs)
+		case .Xor:
+			return spv.OpBitwiseXor(builder, type_info.type, lhs, rhs)
 		}
 	case .Float:
 		#partial switch op {
@@ -932,6 +952,77 @@ cg_expr :: proc(
 	}
 }
 
+cg_cast :: proc(
+	ctx:     ^CG_Context,
+	builder: ^spv.Builder,
+	value:    CG_Value,
+	type:    ^types.Type,
+) -> spv.Id {
+	ti := cg_type(ctx, type)
+	#partial switch type.kind {
+	case .Float:
+		#partial switch value.type.kind {
+		case .Float:
+			return spv.OpFConvert(builder,    ti.type, value.id)
+		case .Uint:
+			return spv.OpConvertUToF(builder, ti.type, value.id)
+		case .Int:
+			return spv.OpConvertSToF(builder, ti.type, value.id)
+		case:
+			unreachable()
+		}
+	case .Int:
+		#partial switch value.type.kind {
+		case .Float:
+			return spv.OpConvertFToS(builder, ti.type, value.id)
+		case .Uint:
+			return spv.OpSConvert(builder,    ti.type, value.id)
+		case .Int:
+			return spv.OpSConvert(builder,    ti.type, value.id)
+		case:
+			unreachable()
+		}
+	case .Uint:
+		#partial switch value.type.kind {
+		case .Float:
+			return spv.OpConvertFToU(builder, ti.type, value.id)
+		case .Uint:
+			return spv.OpUConvert(builder,    ti.type, value.id)
+		case .Int:
+			return spv.OpSConvert(builder,    ti.type, value.id)
+		case:
+			unreachable()
+		}
+	case .Vector:
+		type   := type.variant.(^types.Vector)
+		val    := cg_cast(ctx, builder, value, type.elem)
+		values := make([]spv.Id, type.count, context.temp_allocator)
+		for &v in values {
+			v = val
+		}
+		return spv.OpCompositeConstruct(builder, ti.type, ..values)
+	case .Matrix:
+		type    := type.variant.(^types.Matrix)
+		cols    := make([]spv.Id, type.cols, context.temp_allocator)
+		col_ti  := cg_type(ctx, type.col_type)
+		elem_ti := cg_type(ctx, type.col_type)
+		for &col, col_i in cols {
+			values := make([]spv.Id, type.col_type.count, context.temp_allocator)
+			for &v, i in values {
+				if i == col_i {
+					v = value.id
+				} else {
+					v = cg_nil_value(ctx, elem_ti)
+				}
+			}
+			col = spv.OpCompositeConstruct(builder, col_ti.type, ..values)
+		}
+		return spv.OpCompositeConstruct(builder, ti.type, ..cols)
+	}
+
+	unreachable()
+}
+
 _cg_expr :: proc(
 	ctx:     ^CG_Context,
 	builder: ^spv.Builder,
@@ -1029,7 +1120,6 @@ _cg_expr :: proc(
 			if lhs.storage_class != nil {
 				id    := spv.OpAccessChain(builder, cg_type_ptr(ctx, v.type, lhs.storage_class), lhs.id, cg_constant(ctx, i64(indices[0])).id)
 				value := CG_Value { id = id, storage_class = lhs.storage_class, }
-				fmt.println(value)
 				return value
 			}
 
@@ -1041,7 +1131,7 @@ _cg_expr :: proc(
 
 	case ^ast.Expr_Call:
 		if v.is_cast {
-			
+			return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type), }
 		} else {
 			fn   := cg_expr(ctx, builder, v.lhs)
 			args := make([]spv.Id, len(v.args))
@@ -1075,8 +1165,37 @@ _cg_expr :: proc(
 
 		return { id = spv.OpVectorExtractDynamic(builder, cg_type(ctx, v.type).type, lhs.id, rhs.id), }
 	case ^ast.Expr_Cast:
+		return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.value), v.type), }
 	case ^ast.Expr_Unary:
-	
+		e  := cg_expr(ctx, builder, v.expr)
+		ti := cg_type(ctx, expr.type)
+		#partial switch v.op {
+		case .Xor:
+			return { id = spv.OpNot(builder, ti.type, e.id), }
+		case .Subtract:
+			#partial switch expr.type.kind {
+			case .Matrix:
+				#partial switch expr.type.variant.(^types.Matrix).col_type.elem.kind {
+				case .Int, .Uint:
+					return { id = spv.OpISub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
+				case .Float:
+					return { id = spv.OpFSub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
+				}
+			case .Vector:
+				#partial switch expr.type.variant.(^types.Vector).elem.kind {
+				case .Int, .Uint:
+					return { id = spv.OpISub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
+				case .Float:
+					return { id = spv.OpFSub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
+				}
+			case .Int, .Uint:
+				return { id = spv.OpISub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
+			case .Float:
+				return { id = spv.OpFSub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
+			}
+		case .Add:
+			return e
+		}
 	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix:
 		panic("")
 	}
@@ -1234,6 +1353,9 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 			lhs := cg_expr(ctx, builder, v.lhs[lhs_i], deref = false)
 			rhs := cg_expr(ctx, builder, value)
 			if v.op == nil {
+				if !types.equal(lhs.type, rhs.type) {
+					rhs.id = cg_cast(ctx, builder, rhs, lhs.type)
+				}
 				spv.OpStore(builder, lhs.id, rhs.id)
 				continue
 			}
