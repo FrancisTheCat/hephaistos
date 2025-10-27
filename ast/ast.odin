@@ -65,6 +65,11 @@ Expr_Builtin :: struct {
 	ident:      tokenizer.Token,
 }
 
+Type_Import :: struct {
+	using node: Expr,
+	ident:      tokenizer.Token,
+}
+
 Shader_Stage :: enum {
 	Invalid = 0,
 	Vertex,
@@ -256,6 +261,7 @@ Any_Node :: union {
 	^Expr_Unary,
 	^Expr_Builtin,
 
+	^Type_Import,
 	^Type_Struct,
 	^Type_Array,
 	^Type_Matrix,
@@ -289,6 +295,7 @@ Any_Expr :: union {
 	^Expr_Unary,
 	^Expr_Builtin,
 	
+	^Type_Import,
 	^Type_Struct,
 	^Type_Array,
 	^Type_Matrix,

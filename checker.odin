@@ -18,6 +18,7 @@ Checker :: struct {
 	errors:          [dynamic]tokenizer.Error,
 	error_allocator: runtime.Allocator,
 	shader_stage:    ast.Shader_Stage,
+	shared_types:    map[string]^types.Type,
 }
 
 Addressing_Mode :: enum {
@@ -729,7 +730,8 @@ check_stmt_list :: proc(checker: ^Checker, stmts: []^ast.Stmt) -> (diverging: bo
 
 @(private = "file")
 checker_init :: proc(
-	checker: ^Checker,
+	checker:      ^Checker,
+	shared_types: []Shared_Type,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) {
@@ -753,14 +755,157 @@ checker_init :: proc(
 
 	scope_insert_entity(checker, entity_new(.Type, { text = "f32"  }, types.t_f32,  allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Type, { text = "f64"  }, types.t_f64,  allocator = allocator))
+
+	checker.shared_types.allocator = allocator
+	for s in shared_types {
+		// scope_insert_entity(checker, entity_new(.Type, { text = s.name, }, s.type, allocator = allocator))
+		checker.shared_types[s.name] = s.type
+	}
+}
+
+type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator) -> ^types.Type {
+	switch v in ti.variant {
+	case reflect.Type_Info_Named:
+		return type_info_to_type(v.base, allocator)
+	case reflect.Type_Info_Integer:
+		switch ti.size {
+		case 1:
+			return types.t_i8  if v.signed else types.t_u8
+		case 2:
+			return types.t_i16 if v.signed else types.t_u16
+		case 4:
+			return types.t_i32 if v.signed else types.t_u32
+		case 8:
+			return types.t_i64 if v.signed else types.t_u64
+		case:
+			fmt.panicf("integer types have to be either 1, 2, 4 or 8 bytes wide, got %v", ti.size)
+		}
+	case reflect.Type_Info_Rune:
+		return types.t_i32
+	case reflect.Type_Info_Float:
+		switch ti.size {
+		case 4:
+			return types.t_f32
+		case 8:
+			return types.t_f64
+		case:
+			fmt.panicf("float types have to be either 4 or 8 bytes wide, got %v", ti.size)
+		}
+	case reflect.Type_Info_Complex:
+		elem: ^types.Type
+		switch ti.size {
+		case 8:
+			elem = types.t_f32
+		case 16:
+			elem = types.t_f64
+		case:
+			fmt.panicf("complex types have to be either 8 or 16 bytes wide, got %v", ti.size)
+		}
+		return types.vector_new(elem, 2, allocator)
+	case reflect.Type_Info_Quaternion:
+		elem: ^types.Type
+		switch ti.size {
+		case 16:
+			elem = types.t_f32
+		case 32:
+			elem = types.t_f64
+		case:
+			fmt.panicf("quaternion types have to be either 16 or 32 bytes wide, got %v", ti.size)
+		}
+		return types.vector_new(elem, 4, allocator)
+	case reflect.Type_Info_String:
+		panic("string types can not be shared")
+	case reflect.Type_Info_Boolean:
+		switch ti.size {
+		case 1:
+			return types.t_bool
+		case 2:
+			return types.t_i16
+		case 4:
+			return types.t_i32
+		case 8:
+			return types.t_i64
+		case:
+			fmt.panicf("boolean types have to be either 1, 2, 4 or 8 bytes wide, got %v", ti.size)
+		}
+	case reflect.Type_Info_Any:
+		panic("any types can not be shared")
+	case reflect.Type_Info_Type_Id:
+		panic("typeid types can not be shared")
+	case reflect.Type_Info_Pointer:
+		panic("pointer types can not be shared")
+	case reflect.Type_Info_Multi_Pointer:
+		panic("multi pointer types can not be shared")
+	case reflect.Type_Info_Procedure:
+		panic("procedure types can not be shared")
+	case reflect.Type_Info_Array:
+		return types.vector_new(type_info_to_type(v.elem, allocator), v.count, allocator)
+	case reflect.Type_Info_Enumerated_Array:
+		unimplemented()
+	case reflect.Type_Info_Dynamic_Array:
+		panic("dynamic array types can not be shared")
+	case reflect.Type_Info_Slice:
+		panic("slice types can not be shared")
+	case reflect.Type_Info_Parameters:
+		panic("???")
+	case reflect.Type_Info_Struct:
+		fields := make([]types.Field, v.field_count, allocator)
+		for &f, i in fields {
+			f.name.text = v.names[i]
+			f.type      = type_info_to_type(v.types[i], allocator)
+			f.offset    = int(v.offsets[i])
+		}
+		s       := types.new(.Struct, types.Struct, allocator)
+		s.size   = ti.size
+		s.align  = ti.align
+		s.fields = fields
+		return s
+	case reflect.Type_Info_Union:
+		panic("union types can not be shared")
+	case reflect.Type_Info_Enum:
+		return type_info_to_type(v.base, allocator)
+	case reflect.Type_Info_Map:
+		panic("map types can not be shared")
+	case reflect.Type_Info_Bit_Set:
+		return type_info_to_type(v.underlying, allocator)
+	case reflect.Type_Info_Simd_Vector:
+		return types.vector_new(type_info_to_type(v.elem, allocator), v.count, allocator)
+	case reflect.Type_Info_Matrix:
+		elem := type_info_to_type(v.elem, allocator)
+		col  := types.vector_new(elem, v.row_count, allocator)
+		return types.matrix_new(col, v.column_count, allocator)
+	case reflect.Type_Info_Soa_Pointer:
+		panic("soa pointer types can not be shared")
+	case reflect.Type_Info_Bit_Field:
+		return type_info_to_type(v.backing_type, allocator)
+	}
+	unreachable()
+}
+
+Shared_Type :: struct {
+	name: string,
+	type: ^types.Type,
+}
+
+shared_types_from_typeids :: proc(typeids: []typeid, allocator := context.allocator) -> []Shared_Type {
+	output := make([]Shared_Type, len(typeids), allocator)
+	for t, i in typeids {
+		ti    := type_info_of(t)
+		named := ti.variant.(reflect.Type_Info_Named) or_else panic("only named types can be shared")
+		type  := type_info_to_type(named.base, allocator)
+		output[i] = { name = named.name, type = type}
+	}
+	return output
 }
 
 check :: proc(
 	stmts: []^ast.Stmt,
+	types: []typeid,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (checker: Checker, errors: []tokenizer.Error) {
-	checker_init(&checker, allocator, error_allocator)
+	shared_types := shared_types_from_typeids(types, allocator)
+	checker_init(&checker, shared_types, allocator, error_allocator)
 	check_stmt_list(&checker, stmts)
 	return checker, checker.errors[:]
 }
@@ -1384,6 +1529,13 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		type.size   = offset
 		type.align  = align
 
+		operand.type = type
+		operand.mode = .Type
+	case ^ast.Type_Import:
+		type, ok := checker.shared_types[v.ident.text]
+		if !ok {
+			error(checker, v.ident, "unknown shared type: %s", v.ident.text)
+		}
 		operand.type = type
 		operand.mode = .Type
 	}

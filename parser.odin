@@ -336,6 +336,20 @@ parse_atom_expr :: proc(parser: ^Parser) -> (expr: ^ast.Expr, ok: bool) {
 		c.value     = value
 		return c, true
 
+	case .Directive:
+		token_advance(parser)
+		directive := token_expect(parser, .Ident, "directive") or_return
+		switch directive.text {
+		case "import":
+			token_expect(parser, .Open_Paren ) or_return
+			ident := token_expect(parser, .Ident) or_return
+			token_expect(parser, .Close_Paren) or_return
+			i      := ast.new(ast.Type_Import, token.location, parser.end_location, parser.allocator)
+			i.ident = ident
+			return i, true
+		case:
+			error(parser, directive, "unknown directive: '%s'", directive.text)
+		}
 	}
 
 	error(parser, token, "unexpected token")

@@ -550,6 +550,24 @@ matrix_new :: proc(col_type: ^Vector, cols: int, allocator: mem.Allocator) -> ^M
 	return type
 }
 
+// @(require_results)
+// struct_new :: proc(fields: []Field, allocator: mem.Allocator) -> ^Struct {
+// 	type       := new(.Struct, Struct, allocator)
+// 	type.fields = fields
+
+// 	offset: int
+// 	for &field in fields {
+// 		if field.type.align != 0 {
+// 			offset = mem.align_forward_int(offset, field.type.align)
+// 		}
+// 		field.offset = offset
+// 		offset      += type.size
+// 		type.align   = max(type.align, field.type.align)
+// 	}
+// 	type.size = offset
+// 	return type
+// }
+
 @(require_results)
 is_comparable :: proc(type: ^Type) -> bool{
 	#partial switch type.kind {

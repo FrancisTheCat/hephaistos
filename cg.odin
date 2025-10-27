@@ -1196,7 +1196,7 @@ _cg_expr :: proc(
 		case .Add:
 			return e
 		}
-	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix:
+	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Import:
 		panic("")
 	}
 
