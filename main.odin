@@ -35,6 +35,7 @@ when ENABLE_SPALL {
 
 compile_shader :: proc(
 	source: string,
+	path:   string,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (code: []u32, errors: []tokenizer.Error) {
@@ -65,7 +66,7 @@ compile_shader :: proc(
 		return
 	}
 
-	code = cg_generate(&checker, stmts, allocator = allocator)
+	code = cg_generate(&checker, stmts, path, source, allocator)
 
 	return
 }
@@ -104,7 +105,7 @@ main :: proc() {
 	file_name    := "test.hep"
 	source       := string(os.read_entire_file(file_name) or_else panic(""))
 	defer delete(source)
-	code, errors := compile_shader(source, error_allocator = context.temp_allocator)
+	code, errors := compile_shader(source, file_name, error_allocator = context.temp_allocator)
 	defer delete(code)
 
 	if len(errors) != 0 {

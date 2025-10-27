@@ -63,8 +63,8 @@ CG_Context :: struct {
 	referenced_globals: map[spv.Id]struct{},
 
 	link_name:          string,
-
 	shader_stage:       ast.Shader_Stage,
+	debug_file_id:      spv.Id,
 }
 
 CG_Entity :: struct {
@@ -317,7 +317,9 @@ cg_generate :: proc(
 	spv.OpName(&ctx.debug_b, void_proc, "$VOID_PROC")
 
 	if file_name, ok := file_name.?; ok {
-		spv.OpSource(&ctx.debug_a, .Unknown, 0, cg_string(&ctx, file_name), file_source)
+		file := cg_string(&ctx, file_name)
+		spv.OpSource(&ctx.debug_a, .Unknown, 0, file, file_source)
+		ctx.debug_file_id = file
 	}
 
 	spv.OpCapability(&ctx.meta, .Shader)
@@ -1232,6 +1234,10 @@ cg_lookup_label :: proc(ctx: ^CG_Context, label: string) -> ^CG_Scope {
 cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global := false) -> (returned: bool) {
 	if stmt == nil {
 		return
+	}
+
+	if ctx.debug_file_id != 0 {
+		spv.OpLine(builder, ctx.debug_file_id, u32(stmt.start.line), 0)
 	}
 
 	switch v in stmt.derived_stmt {
