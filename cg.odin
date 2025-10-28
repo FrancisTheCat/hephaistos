@@ -1303,7 +1303,9 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 	}
 
 	if ctx.debug_file_id != 0 {
-		spv.OpLine(builder, ctx.debug_file_id, u32(stmt.start.line), 0)
+		if _, is_decl := stmt.derived_stmt.(^ast.Decl_Value); !is_decl {
+			spv.OpLine(builder, ctx.debug_file_id, u32(stmt.start.line), 0)
+		}
 	}
 
 	switch v in stmt.derived_stmt {
@@ -1522,6 +1524,9 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 		_ = cg_expr(ctx, builder, v.expr)
 
 	case ^ast.Decl_Value:
+		if v.mutable && ctx.debug_file_id != 0 && !global {
+			spv.OpLine(builder, ctx.debug_file_id, u32(stmt.start.line), 0)
+		}
 		cg_decl(ctx, builder, v, global)
 	}
 
