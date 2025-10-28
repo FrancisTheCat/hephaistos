@@ -1416,6 +1416,12 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 		append(&builder.data, ..then_block.data[:])
 		append(&builder.data, ..else_block.data[:])
 		append(&builder.data, ..end_block.data[:])
+	case ^ast.Stmt_When:
+		if v.cond.const_value.(bool) {
+			cg_stmt_list(ctx, builder, v.then_block)
+		} else {
+			cg_stmt_list(ctx, builder, v.else_block)
+		}
 	case ^ast.Stmt_Switch:
 		cg_scope_push(ctx, v.label.text)
 		defer cg_scope_pop(ctx)

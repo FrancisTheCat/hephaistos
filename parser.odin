@@ -665,7 +665,7 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 	#partial switch token.kind {
 	case .Attribute:
 		if len(attributes) != 0 {
-			error(parser, token, "only on set of attributes can be applied to a statement")
+			error(parser, token, "only one set of attributes can be applied to a statement")
 		}
 		return parse_stmt(parser, label, parse_attributes(parser) or_return)
 	case .Return, .Continue, .Break, .Literal, .Open_Paren, .Cast, .Dollar:
@@ -754,6 +754,27 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 		if_stmt.then_block = then_block
 		if_stmt.else_block = else_block
 		return if_stmt, true
+	case .When:
+		token_advance(parser)
+		cond := parse_expr(parser) or_return
+
+		token_expect(parser, .Open_Brace) or_return
+		then_block := parse_stmt_list(parser) or_return
+		token_advance(parser)
+		else_block: []^ast.Stmt
+		if token_peek(parser).kind == .Else {
+			token_advance(parser)
+			token_expect(parser, .Open_Brace) or_return
+			else_block = parse_stmt_list(parser) or_return
+			token_expect(parser, .Close_Brace)
+		}
+
+		when_stmt := ast.new(ast.Stmt_When, token.location, parser.end_location, parser.allocator)
+		when_stmt.label      = label
+		when_stmt.cond       = cond
+		when_stmt.then_block = then_block
+		when_stmt.else_block = else_block
+		return when_stmt, true
 	case .Switch:
 		token_advance(parser)
 		init: ^ast.Stmt
@@ -827,6 +848,7 @@ print_expr :: proc(b: ^strings.Builder, expr: ^ast.Expr, indent := 0) {
 	}
 }
 
+// only used for debugging
 print_stmt :: proc(b: ^strings.Builder, stmt: ^ast.Stmt, indent := 0) {
 	if stmt == nil {
 		return
@@ -855,6 +877,14 @@ print_stmt :: proc(b: ^strings.Builder, stmt: ^ast.Stmt, indent := 0) {
 			print_stmt(b, s, indent + 1)
 		}
 	case ^ast.Stmt_If:
+		for s in v.then_block {
+			print_stmt(b, s, indent + 1)
+		}
+		fmt.println("ELSE")
+		for s in v.else_block {
+			print_stmt(b, s, indent + 1)
+		}
+	case ^ast.Stmt_When:
 		for s in v.then_block {
 			print_stmt(b, s, indent + 1)
 		}

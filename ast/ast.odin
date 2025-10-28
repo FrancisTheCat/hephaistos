@@ -1,4 +1,4 @@
-package ast
+package hephaistos_ast
 
 import "base:intrinsics"
 
@@ -221,6 +221,14 @@ Stmt_If :: struct {
 	else_block: []^Stmt,
 }
 
+Stmt_When :: struct {
+	using node: Stmt,
+	label:      tokenizer.Token,
+	cond:       ^Expr,
+	then_block: []^Stmt,
+	else_block: []^Stmt,
+}
+
 Switch_Case :: struct {
 	token: tokenizer.Token,
 	value: ^Expr,
@@ -278,6 +286,7 @@ Any_Node :: union {
 	^Stmt_Switch,
 	^Stmt_Assign,
 	^Stmt_Expr,
+	^Stmt_When,
 
 	^Decl_Value,
 }
@@ -318,6 +327,7 @@ Any_Stmt :: union {
 	^Stmt_Switch,
 	^Stmt_Assign,
 	^Stmt_Expr,
+	^Stmt_When,
 
 	^Decl_Value,
 }

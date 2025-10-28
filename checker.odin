@@ -272,12 +272,25 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 		cond := check_expr(checker, v.cond)
 		if cond.type.kind != .Bool {
-			error(checker, cond, "expected a boolean expression in if statement condition but got: %v", cond.type)
+			error(checker, cond, "expected a boolean expression in if statement condition but got expression of type %v", cond.type)
 		}
 
 		then_diverging := check_stmt_list(checker, v.then_block)
 		else_diverging := check_stmt_list(checker, v.else_block)
 		return then_diverging && else_diverging
+	case ^ast.Stmt_When:
+		cond := check_expr(checker, v.cond)
+		if c, ok := cond.value.(bool); ok {
+			if c {
+				return check_stmt_list(checker, v.then_block)
+			} else {
+				return check_stmt_list(checker, v.else_block)
+			}
+		} else {
+			error(checker, cond, "expected a constant boolean expression in when statement condition")
+		}
+		return false
+
 	case ^ast.Stmt_Switch:
 		scope_push(checker, .Block).label = v.label
 		defer scope_pop(checker)
@@ -1179,18 +1192,20 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 
 		if !types.operator_applicable(operand.type, v.op) {
 			error(checker, v, "operator %v is not defined in `%v %v %v`", tokenizer.to_string(v.op), lhs.type, tokenizer.to_string(v.op), rhs.type)
+			return
+		}
+
+		operand.mode = .RValue
+		if lhs.mode == .Const && rhs.mode == .Const {
+			operand.mode  = .Const
+			operand.value = evaluate_const_binary_op(checker, lhs.value, rhs.value, v)
 		}
 
 		if op_is_relation(v.op) {
 			operand.type = types.t_bool
 			operand.mode = .RValue
-		} else if lhs.mode == .Const && rhs.mode == .Const {
-			operand.mode  = .Const
-			operand.value = evaluate_const_binary_op(checker, lhs.value, rhs.value, v)
-		} else {
-			operand.mode = .RValue
 		}
-		
+
 	case ^ast.Expr_Ident:
 		e, ok := scope_lookup(checker, v.ident.text)
 		if !ok {

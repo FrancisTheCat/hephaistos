@@ -1,5 +1,5 @@
 #+feature dynamic-literals
-package tokenizer
+package hephaistos_tokenizer
 
 import "core:fmt"
 import "core:strconv"
@@ -70,6 +70,7 @@ Token_Kind :: enum u16 {
 	Case,
 	Fallthrough,
 	In,
+	When,
 
 	// Uniform,
 
@@ -93,6 +94,7 @@ keyword_strings := map[string]Token_Kind{
 	"case"        = .Case,
 	"fallthrough" = .Fallthrough,
 	"in"          = .In,
+	"when"        = .When,
 
 	// "uniform"     = .Uniform,
 
@@ -543,6 +545,7 @@ token_strings := #sparse[Token_Kind]string {
 	.Case        = "case",
 	.Fallthrough = "fallthrough",
 	.In          = "in",
+	.When        = "when",
 
 	// .Uniform     = "uniform",
 

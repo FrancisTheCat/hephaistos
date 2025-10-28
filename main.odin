@@ -35,6 +35,7 @@ when ENABLE_SPALL {
 compile_shader :: proc(
 	source: string,
 	path:   string,
+	types:  []typeid = {},
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (code: []u32, errors: []tokenizer.Error) {
@@ -50,14 +51,8 @@ compile_shader :: proc(
 		return
 	}
 
-	Vertex_Shader_Constants :: struct {
-		view:       matrix[4, 4]f32,
-		projection: matrix[4, 4]f32,
-		model:      matrix[4, 4]f32,
-	}
-
 	checker: Checker
-	checker, errors = check(stmts, { Vertex_Shader_Constants, }, context.temp_allocator, error_allocator)
+	checker, errors = check(stmts, types, context.temp_allocator, error_allocator)
 	if len(errors) != 0 {
 		return
 	}
@@ -98,10 +93,16 @@ main :: proc() {
 	})
 	defer delete(user_formatters)
 
-	file_name    := "test.hep"
-	source       := string(os.read_entire_file(file_name) or_else panic(""))
+	Vertex_Shader_Constants :: struct {
+		view:       matrix[4, 4]f32,
+		projection: matrix[4, 4]f32,
+		model:      matrix[4, 4]f32,
+	}
+
+	file_name := "test.hep"
+	source    := string(os.read_entire_file(file_name) or_else panic(""))
 	defer delete(source)
-	code, errors := compile_shader(source, file_name, error_allocator = context.temp_allocator)
+	code, errors := compile_shader(source, file_name, types = { Vertex_Shader_Constants, }, error_allocator = context.temp_allocator)
 	defer delete(code)
 
 	if len(errors) != 0 {

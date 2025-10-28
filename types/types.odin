@@ -1,4 +1,4 @@
-package types
+package hephaistos_types
 
 import "core:io"
 import "core:fmt"
