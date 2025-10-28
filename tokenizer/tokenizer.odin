@@ -72,13 +72,12 @@ Token_Kind :: enum u16 {
 	In,
 	When,
 
-	// Uniform,
-
 	Struct,
 	Enum,
 	Proc,
 	Vector,
 	Matrix,
+	Sampler,
 
 	Cast,
 }
@@ -96,13 +95,12 @@ keyword_strings := map[string]Token_Kind{
 	"in"          = .In,
 	"when"        = .When,
 
-	// "uniform"     = .Uniform,
-
 	"struct"      = .Struct,
 	"enum"        = .Enum,
 	"proc"        = .Proc,
 	"vector"      = .Vector,
 	"matrix"      = .Matrix,
+	"sampler"     = .Sampler,
 
 	"cast"        = .Cast,
 }
@@ -547,13 +545,12 @@ token_strings := #sparse[Token_Kind]string {
 	.In          = "in",
 	.When        = "when",
 
-	// .Uniform     = "uniform",
-
 	.Struct      = "struct",
 	.Enum        = "enum",
 	.Proc        = "proc",
 	.Vector      = "vector",
 	.Matrix      = "matrix",
+	.Sampler     = "sampler",
 
 	.Cast        = "cast",
 

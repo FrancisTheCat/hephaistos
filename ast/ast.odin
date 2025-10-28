@@ -158,6 +158,11 @@ Type_Import :: struct {
 	ident:      tokenizer.Token,
 }
 
+Type_Sampler :: struct {
+	using node: Expr,
+	dimensions: ^Expr,
+	texel_type: ^Expr,
+}
 
 Decl_Value :: struct {
 	using node:     Decl,
@@ -277,6 +282,7 @@ Any_Node :: union {
 	^Type_Struct,
 	^Type_Array,
 	^Type_Matrix,
+	^Type_Sampler,
 
 	^Stmt_Return,
 	^Stmt_Break,
@@ -312,6 +318,7 @@ Any_Expr :: union {
 	^Type_Struct,
 	^Type_Array,
 	^Type_Matrix,
+	^Type_Sampler,
 }
 
 Any_Decl :: union {

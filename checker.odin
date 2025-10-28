@@ -1566,16 +1566,45 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 	case ^ast.Expr_Index:
 		lhs := check_expr(checker, v.lhs)
 		rhs := check_expr(checker, v.rhs)
-		if rhs.type.kind != .Int && rhs.type.kind != .Uint {
-			error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
-		}
 
 		result_type := types.t_invalid
 		#partial switch lhs.type.kind {
 		case .Matrix:
+			if !types.is_integer(rhs.type) {
+				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
+			}
 			result_type = lhs.type.variant.(^types.Matrix).col_type
 		case .Vector:
+			if !types.is_integer(rhs.type) {
+				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
+			}
 			result_type = lhs.type.variant.(^types.Vector).elem
+		case .Sampler:
+			sampler := lhs.type.variant.(^types.Sampler)
+			if sampler.dimensions == 1 {
+				if !types.is_numeric(rhs.type) {
+					error(
+						checker,
+						rhs,
+						"expected a scalar to sample texture of type %v, got: %v",
+						(^types.Type)(sampler),
+						rhs.type,
+					)
+				}
+			} else {
+				if !types.is_vector(rhs.type) || rhs.type.variant.(^types.Vector).count != sampler.dimensions {
+					error(
+						checker,
+						rhs,
+						"expected a %d dimensional vector to sample texture of type %v, got: %v",
+						sampler.dimensions,
+						(^types.Type)(sampler),
+						rhs.type,
+					)
+				}
+			}
+
+			result_type = sampler.texel_type
 		}
 
 		if result_type.kind == .Invalid {
@@ -1704,6 +1733,21 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		}
 		operand.type = type
 		operand.mode = .Type
+	case ^ast.Type_Sampler:
+		dimensions := check_expr(checker, v.dimensions)
+		if dim, ok := dimensions.value.(i64); ok {
+			if dim < 1 || dim > 3 {
+				error(checker, dimensions, "sampler dimension has to be between 1 and 3, got %d", dim)
+			}
+			texel_type := types.default_type(check_type(checker, v.texel_type))
+			if !(types.is_numeric(texel_type) || types.is_vector(texel_type)) {
+				error(checker, v.texel_type, "texel type of sampler has to be either a numeric type or a vector, got: %v", texel_type)
+			}
+			operand.type = types.sampler_new(texel_type, int(dim), checker.allocator)
+			operand.mode = .Type
+		} else {
+			error(checker, dimensions, "expected a constant integer as the dimension of a sampler")
+		}
 	}
 
 	return

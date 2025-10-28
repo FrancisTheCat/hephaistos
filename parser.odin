@@ -347,6 +347,18 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 
 		return a, true
 
+	case .Sampler:
+		token_advance(parser)
+		token_expect(parser, .Open_Bracket) or_return
+		dim := parse_expr(parser) or_return
+		token_expect(parser, .Close_Bracket) or_return
+		texel := parse_expr(parser, allow_compound_literals = false) or_return
+
+		s := ast.new(ast.Type_Sampler, token.location, parser.end_location, parser.allocator)
+		s.dimensions = dim
+		s.texel_type = texel
+		return s, true
+
 	case .Open_Paren:
 		token_advance(parser)
 		expr := parse_expr(parser) or_return

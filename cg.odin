@@ -21,12 +21,14 @@ CG_Storage_Class :: enum {
 	Input,
 	Output,
 	Push_Constant,
+	Uniform_Constant,
 }
 
 CG_Type_Info :: struct {
-	type:      spv.Id,
-	nil_value: spv.Id,
-	ptr_types: [CG_Storage_Class]spv.Id,
+	type:       spv.Id,
+	nil_value:  spv.Id,
+	image_type: spv.Id,
+	ptr_types:  [CG_Storage_Class]spv.Id,
 }
 
 Type_Hash_Entry :: struct {
@@ -223,16 +225,24 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 		if v.mutable {
 			if len(v.values) == 0 {
 				for type, i in v.types {
+					storage_class     := storage_class
+					spv_storage_class := spv_storage_class
+
 					type_info := cg_type(ctx, type, explicit_layout)
 					init: Maybe(spv.Id)
-					if !v.uniform && !v.push_constant {
+					if !v.uniform && !v.push_constant && !types.is_sampler(type) {
 						init = cg_nil_value(ctx, type_info)
+					}
+					if types.is_sampler(type) {
+						assert(global)
+						storage_class     = .Uniform_Constant
+						spv_storage_class = .UniformConstant
 					}
 					id   := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
 					name := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
 					cg_insert_entity(ctx, name, storage_class, type, id)
 
-					if v.uniform {
+					if v.uniform || types.is_sampler(type) {
 						spv.OpDecorate(&ctx.annotations, id, .Binding,       u32(v.binding))
 						spv.OpDecorate(&ctx.annotations, id, .DescriptorSet, u32(v.descriptor_set))
 					}
@@ -435,6 +445,8 @@ cg_type_ptr_from_type :: proc(ctx: ^CG_Context, type_info: ^CG_Type_Info, storag
 			spv_storage_class = .Output
 		case .Push_Constant:
 			spv_storage_class = .PushConstant
+		case .Uniform_Constant:
+			spv_storage_class = .UniformConstant
 		}
 		type_info.ptr_types[storage_class] = spv.OpTypePointer(&ctx.types, spv_storage_class, type_info.type)
 	}
@@ -546,6 +558,17 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, explicit_layout := false) -
 			arg = cg_type(ctx, type.args[i].type).type
 		}
 		info.type = spv.OpTypeFunction(&ctx.types, cg_type(ctx, type.return_type).type, ..args)
+	case .Sampler:
+		type := type.variant.(^types.Sampler)
+		sampled_type: ^types.Type
+		if types.is_numeric(type.texel_type) {
+			sampled_type = type.texel_type
+		} else {
+			assert(types.is_vector(type.texel_type))
+			sampled_type = type.texel_type.variant.(^types.Vector).elem
+		}
+		info.image_type = spv.OpTypeImage(&ctx.types, cg_type(ctx, sampled_type).type, spv.Dim(type.dimensions - 1), 0, 0, 0, 1, .Unknown)
+		info.type       = spv.OpTypeSampledImage(&ctx.types, info.image_type)
 	}
 
 	return info
@@ -692,11 +715,12 @@ cg_deref :: proc(ctx: ^CG_Context, builder: ^spv.Builder, value: CG_Value) -> sp
 
 	// 	return spv.OpVectorShuffle(builder, cg_type(ctx, value.type).type, v, v, ..indices[:])
 	// }
-	if value.storage_class == nil {
+	#partial switch value.storage_class {
+	case nil:
 		return value.id
+	case:
+		return spv.OpLoad(builder, cg_type(ctx, value.type).type, value.id)
 	}
-
-	return spv.OpLoad(builder, cg_type(ctx, value.type).type, value.id)
 }
 
 @(require_results)
@@ -1076,7 +1100,7 @@ _cg_expr :: proc(
 	case ^ast.Expr_Ident:
 		value = cg_lookup_entity(ctx, v.ident.text).value
 		#partial switch value.storage_class {
-		case .Uniform, .Global, .Push_Constant, .Output:
+		case .Uniform, .Global, .Push_Constant, .Output, .Uniform_Constant:
 			ctx.referenced_globals[value.id] = {}
 		}
 		return
@@ -1226,6 +1250,17 @@ _cg_expr :: proc(
 		rhs := cg_expr(ctx, builder, v.rhs)
 
 		if lhs.storage_class != nil {
+			if types.is_sampler(lhs.type) {
+				sampler := lhs.type.variant.(^types.Sampler)
+				image   := cg_deref(ctx, builder, lhs)
+				id      := spv.OpImageSampleImplicitLod(
+					builder,
+					cg_type(ctx, sampler.texel_type).type,
+					image,
+					rhs.id,
+				)
+				return { id = id, }
+			}
 			id    := spv.OpAccessChain(builder, cg_type_ptr(ctx, v.type, lhs.storage_class), lhs.id, rhs.id)
 			value := CG_Value { id = id, storage_class = lhs.storage_class, }
 			return value
@@ -1264,8 +1299,8 @@ _cg_expr :: proc(
 		case .Add:
 			return e
 		}
-	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Import:
-		panic("")
+	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Import, ^ast.Type_Sampler:
+		panic("tried to cg type as expression")
 	}
 
 	fmt.panicf("unimplemented: %v", reflect.union_variant_typeid(expr.derived_expr))

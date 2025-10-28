@@ -25,26 +25,32 @@ Const_Value :: union {
 
 Struct :: struct {
 	using base: Type,
-	fields:   []Field,
+	fields:     []Field,
 }
 
 Vector :: struct {
 	using base: Type,
 	count:      int,
-	elem:      ^Type,
+	elem:       ^Type,
 }
 
 Matrix :: struct {
 	using base: Type,
 	cols:       int,
-	col_type:  ^Vector,
+	col_type:   ^Vector,
 }
 
 Proc :: struct {
-	using base:   Type,
-	args:       []Field,
-	returns:    []Field,
+	using base:  Type,
+	args:        []Field,
+	returns:     []Field,
 	return_type: ^Type,
+}
+
+Sampler :: struct {
+	using base: Type,
+	dimensions: int,
+	texel_type: ^Type,
 }
 
 Kind :: enum {
@@ -59,6 +65,7 @@ Kind :: enum {
 	Matrix,
 	Vector,
 	Proc,
+	Sampler,
 
 	Tuple,
 }
@@ -72,6 +79,7 @@ Type :: struct {
 		^Matrix,
 		^Vector,
 		^Proc,
+		^Sampler,
 	},
 }
 
@@ -180,6 +188,10 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 			print_writer(w, type.type)
 		}
 		fmt.wprint(w, ")")
+	case .Sampler:
+		type := type.variant.(^Sampler)
+		fmt.wprintf(w, "sampler[%d]", type.dimensions)
+		print_writer(w, type.texel_type)
 	}
 }
 
@@ -249,6 +261,15 @@ equal :: proc(a, b: ^Type) -> bool {
 		return equal(a.elem, b.elem)
 	case .Proc:
 		unimplemented()
+	case .Sampler:
+		a := a.variant.(^Sampler)
+		b := b.variant.(^Sampler)
+
+		if a.dimensions != b.dimensions {
+			return false
+		}
+
+		return equal(a.texel_type, b.texel_type)
 	}
 
 	return true
@@ -415,32 +436,30 @@ to_bytes :: proc(v: $P/^$T) -> []byte {
 }
 
 @(require_results)
-type_hash :: proc(type: ^Type) -> u64 {
-	h := hash.fnv64a(to_bytes(type)[:offset_of(Type, variant)])
+type_hash :: proc(type: ^Type, seed: u64 = 0xcbf29ce484222325) -> u64 {
+	h := hash.fnv64a(to_bytes(type)[:offset_of(Type, variant)], seed)
 
 	switch v in type.variant {
 	case ^Struct:
 		for field in v.fields {
-			field_hash := type_hash(field.type)
-			h           = hash.fnv64a(to_bytes(&field_hash), h)
+			h = type_hash(field.type, h)
 		}
 	case ^Matrix:
-		col_hash := type_hash(v.col_type)
-		h         = hash.fnv64a(to_bytes(&col_hash), h)
-		h         = hash.fnv64a(to_bytes(&v.cols), h)
+		h = type_hash(v.col_type, h)
+		h = hash.fnv64a(to_bytes(&v.cols), h)
 	case ^Vector:
-		elem_hash := type_hash(v.elem)
-		h          = hash.fnv64a(to_bytes(&elem_hash), h)
-		h          = hash.fnv64a(to_bytes(&v.count), h)
+		h = type_hash(v.elem, h)
+		h = hash.fnv64a(to_bytes(&v.count), h)
 	case ^Proc:
 		for field in v.args {
-			field_hash := type_hash(field.type)
-			h           = hash.fnv64a(to_bytes(&field_hash), h)
+			h = type_hash(field.type, h)
 		}
 		for field in v.returns {
-			field_hash := type_hash(field.type)
-			h           = hash.fnv64a(to_bytes(&field_hash), h)
+			h = type_hash(field.type, h)
 		}
+	case ^Sampler:
+		h = type_hash(v.texel_type, h)
+		h = hash.fnv64a(to_bytes(&v.dimensions))
 	}
 	
 	return h
@@ -525,13 +544,25 @@ matrix_elem_type :: proc(t: ^Type) -> ^Type {
 @(require_results)
 vector_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Vector {
 	assert(elem      != nil)
-	// assert(elem.size != 0)
+	assert(elem.size != 0)
 
 	type := new(.Vector, Vector, allocator)
 	type.elem  = elem
 	type.count = count
 	type.size  = count * elem.size
 	type.align = elem.align
+
+	return type
+}
+
+@(require_results)
+sampler_new :: proc(texel_type: ^Type, dimensions: int, allocator: mem.Allocator) -> ^Sampler {
+	assert(texel_type      != nil)
+	assert(texel_type.size != 0)
+
+	type           := new(.Sampler, Sampler, allocator)
+	type.texel_type = texel_type
+	type.dimensions = dimensions
 
 	return type
 }
@@ -575,6 +606,11 @@ is_comparable :: proc(type: ^Type) -> bool{
 		return false
 	}
 	return true
+}
+
+@(require_results)
+is_sampler :: proc(type: ^Type) -> bool {
+	return type.kind == .Sampler
 }
 
 @(require_results)
