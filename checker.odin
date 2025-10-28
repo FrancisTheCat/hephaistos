@@ -235,7 +235,28 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		scope_push(checker, .Loop).label = v.label
 		defer scope_pop(checker)
 
-		return check_stmt_list(checker, v.body)
+		start := check_expr(checker, v.start_expr)
+		end   := check_expr(checker, v.end_expr, type_hint = start.type)
+		if !types.is_numeric(start.type) {
+			error(checker, v.end, "non-numeric type in range statment: %v", start.type)
+		}
+		iter_type := types.op_result_type(start.type, end.type, false, checker.allocator)
+		iter_type  = types.default_type(iter_type)
+		if iter_type.kind == .Invalid {
+			error(checker, v.end, "mismatched types in range stmt: %v vs %v", start.type, end.type)
+		}
+		if var, ok := v.variable.derived_expr.(^ast.Expr_Ident); ok {
+			e := entity_new(.Param, var.ident, iter_type, allocator = checker.allocator)
+			scope_insert_entity(checker, e)
+			v.variable.type = iter_type
+		} else {
+			error(checker, v.variable, "iterator variable expression has to be an identifier")
+		}
+
+		scope_push(checker, .Block)
+		defer scope_pop(checker)
+		check_stmt_list(checker, v.body)
+		return false
 	case ^ast.Stmt_For:
 		scope_push(checker, .Loop).label = v.label
 		defer scope_pop(checker)
@@ -255,8 +276,10 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			check_stmt(checker, v.post)
 		}
 
-		return check_stmt_list(checker, v.body)
-
+		scope_push(checker, .Block)
+		defer scope_pop(checker)
+		check_stmt_list(checker, v.body)
+		return false
 	case ^ast.Stmt_Block:
 		scope_push(checker, .Block).label = v.label
 		defer scope_pop(checker)

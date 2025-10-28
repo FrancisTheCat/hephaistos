@@ -957,8 +957,10 @@ cg_expr :: proc(
 	assert(expr      != nil)
 	assert(expr.type != nil)
 
-	value      = _cg_expr(ctx, builder, expr)
-	value.type = expr.type
+	value = _cg_expr(ctx, builder, expr)
+	if value.type == nil {
+		value.type = expr.type
+	}
 
 	if !deref {
 		// assert(value.storage_class != nil)
@@ -1346,6 +1348,74 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 	case ^ast.Stmt_For_Range:
 		cg_scope_push(ctx, v.label.text)
 		defer cg_scope_pop(ctx)
+
+		iter_type := v.variable.type
+		iter_ti   := cg_type(ctx, v.variable.type)
+		iter_var  := spv.OpVariable(builder, cg_type_ptr(ctx, iter_ti, .Function), .Function)
+		iter_init := cg_cast(ctx, builder, cg_expr(ctx, builder, v.start_expr), iter_type)
+		spv.OpStore(builder, iter_var, iter_init)
+
+		body_builder   := &spv.Builder{ current_id = &ctx.current_id, }
+		header_builder := &spv.Builder{ current_id = &ctx.current_id, }
+		end_builder    := &spv.Builder{ current_id = &ctx.current_id, }
+		post_builder   := &spv.Builder{ current_id = &ctx.current_id, }
+
+		spv.OpBranch(builder, ctx.current_id + 1)
+		jump_back_target := spv.OpLabel(builder)
+
+		header := spv.OpLabel(header_builder)
+		spv.OpName(&ctx.debug_b, header, "header")
+		end    := spv.OpLabel(end_builder)
+		spv.OpName(&ctx.debug_b, end, "end")
+
+		post_label := spv.OpLabel(post_builder)
+		#partial switch iter_value := spv.OpLoad(header_builder, iter_ti.type, iter_var); iter_type.kind {
+		case .Uint, .Int:
+			one       := cg_cast(ctx, post_builder, cg_constant(ctx, i64(1)), iter_type)
+			new_value := spv.OpIAdd(post_builder, iter_ti.type, iter_value, one)
+			spv.OpStore(post_builder, iter_var, new_value)
+		case .Float:
+			one       := cg_cast(ctx, post_builder, cg_constant(ctx, f64(1)), iter_type)
+			new_value := spv.OpFAdd(post_builder, iter_ti.type, iter_value, one)
+			spv.OpStore(post_builder, iter_var, new_value)
+		}
+		spv.OpBranch(post_builder, jump_back_target)
+
+		body := cg_scope(ctx, body_builder, v.body, next = post_label)
+
+		condition: spv.Id
+		iter_value := spv.OpLoad(header_builder, iter_ti.type, iter_var)
+		end_value  := cg_cast(ctx, header_builder, cg_expr(ctx, header_builder, v.end_expr), iter_type)
+		#partial switch iter_type.kind {
+		case .Uint:
+			if v.inclusive {
+				condition = spv.OpULessThanEqual(header_builder, cg_type(ctx, types.t_bool).type, iter_value, end_value)
+			} else {
+				condition = spv.OpULessThan     (header_builder, cg_type(ctx, types.t_bool).type, iter_value, end_value)
+			}
+		case .Int:
+			if v.inclusive {
+				condition = spv.OpSLessThanEqual(header_builder, cg_type(ctx, types.t_bool).type, iter_value, end_value)
+			} else {
+				condition = spv.OpSLessThan     (header_builder, cg_type(ctx, types.t_bool).type, iter_value, end_value)
+			}
+		case .Float:
+			if v.inclusive {
+				condition = spv.OpFOrdLessThanEqual(header_builder, cg_type(ctx, types.t_bool).type, iter_value, end_value)
+			} else {
+				condition = spv.OpFOrdLessThan     (header_builder, cg_type(ctx, types.t_bool).type, iter_value, end_value)
+			}
+		}
+		assert(condition != 0)
+
+		spv.OpLoopMerge(builder, end, post_label, {})
+		spv.OpBranch(builder, header)
+		spv.OpBranchConditional(header_builder, condition, body, end)
+
+		append(&builder.data, ..header_builder.data[:])
+		append(&builder.data, ..body_builder.data[:])
+		append(&builder.data, ..post_builder.data[:])
+		append(&builder.data, ..end_builder.data[:])
 
 	case ^ast.Stmt_For:
 		cg_scope_push(ctx, v.label.text)

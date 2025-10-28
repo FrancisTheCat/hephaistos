@@ -192,9 +192,11 @@ Stmt_Continue :: struct {
 Stmt_For_Range :: struct {
 	using node: Stmt,
 	label:      tokenizer.Token,
-	start, end: Expr,
-	ident:      tokenizer.Token,
+	start_expr: ^Expr,
+	end_expr:   ^Expr,
+	variable:   ^Expr,
 	body:       []^Stmt,
+	inclusive:  bool,
 }
 
 Stmt_For :: struct {

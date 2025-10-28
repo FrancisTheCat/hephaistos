@@ -692,6 +692,34 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 			} else {
 				s := parse_simple_stmt(parser) or_return
 				if expr_stmt, ok := s.derived.(^ast.Stmt_Expr); ok {
+					if token_peek(parser).kind == .In {
+						token_advance(parser)
+						start     := parse_expr(parser) or_return
+						inclusive := false
+						#partial switch token_peek(parser).kind {
+						case .Range_Equal:
+							token_advance(parser)
+							inclusive = true
+						case .Range_Less:
+							token_advance(parser)
+						case:
+							token_expect(parser, .Range_Less) or_return
+						}
+						end := parse_expr(parser) or_return
+						token_expect(parser, .Open_Brace) or_return
+						body := parse_stmt_list(parser) or_return
+						token_advance(parser)
+
+						range_stmt           := ast.new(ast.Stmt_For_Range, token.location, parser.end_location, parser.allocator)
+						range_stmt.variable   = expr_stmt.expr
+						range_stmt.label      = label
+						range_stmt.start_expr = start
+						range_stmt.inclusive  = inclusive
+						range_stmt.end_expr   = end
+						range_stmt.body       = body
+
+						return range_stmt, true
+					}
 					cond = expr_stmt.expr
 					break parse_header
 				}
