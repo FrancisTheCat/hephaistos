@@ -19,6 +19,7 @@ Checker :: struct {
 	error_allocator: runtime.Allocator,
 	shader_stage:    ast.Shader_Stage,
 	shared_types:    map[string]^types.Type,
+	config_vars:     map[string]types.Const_Value,
 }
 
 Addressing_Mode :: enum {
@@ -554,10 +555,13 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				}
 				name        := names[name_i]
 				entity_kind := Entity_Kind.Var
+				value: types.Const_Value
 				if !v.mutable {
 					entity_kind = .Const
 					if r.mode == .Type {
 						entity_kind = .Type
+					} else {
+						value = r.value
 					}
 				}
 
@@ -574,7 +578,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				}
 				v.types[name_i] = type
 
-				scope_insert_entity(checker, entity_new(entity_kind, name, type, decl = v, allocator = checker.allocator))
+				scope_insert_entity(checker, entity_new(entity_kind, name, type, value = value, decl = v, allocator = checker.allocator))
 				name_i += 1
 			}
 		}
@@ -771,6 +775,7 @@ check_stmt_list :: proc(checker: ^Checker, stmts: []^ast.Stmt) -> (diverging: bo
 @(private = "file")
 checker_init :: proc(
 	checker:      ^Checker,
+	defines:      map[string]types.Const_Value,
 	shared_types: []Shared_Type,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
@@ -801,6 +806,8 @@ checker_init :: proc(
 		// scope_insert_entity(checker, entity_new(.Type, { text = s.name, }, s.type, allocator = allocator))
 		checker.shared_types[s.name] = s.type
 	}
+
+	checker.config_vars = defines
 }
 
 type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator) -> ^types.Type {
@@ -951,13 +958,14 @@ shared_types_from_typeids :: proc(typeids: []typeid, allocator := context.alloca
 }
 
 check :: proc(
-	stmts: []^ast.Stmt,
-	types: []typeid,
+	stmts:   []^ast.Stmt,
+	defines: map[string]types.Const_Value,
+	types:   []typeid,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (checker: Checker, errors: []tokenizer.Error) {
 	shared_types := shared_types_from_typeids(types, allocator)
-	checker_init(&checker, shared_types, allocator, error_allocator)
+	checker_init(&checker, defines, shared_types, allocator, error_allocator)
 	check_stmt_list(&checker, stmts)
 	return checker, checker.errors[:]
 }
@@ -1194,6 +1202,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 	defer {
 		expr.type        = operand.type
 		expr.const_value = operand.value
+		// assert(operand.mode != .Const || expr.const_value != nil)
 	}
 
 	switch v in expr.derived_expr {
@@ -1215,6 +1224,25 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			operand.value = val
 		}
 		return
+
+	case ^ast.Expr_Config:
+		default := check_expr(checker, v.default)
+		switch _ in default.value {
+		case i64, f64, bool:
+		case string:
+			error(checker, default, "default value for config variable has to be a constant boolean or number, got: %v")
+			return
+		}
+		operand.value = default.value
+		if definition, ok := checker.config_vars[v.ident.text]; ok {
+			if reflect.get_union_variant_raw_tag(definition) != reflect.get_union_variant_raw_tag(default.value) {
+				error(checker, v, "type of defined value does not have same type as the default value")
+				return
+			}
+			operand.value = definition
+		}
+		operand.type = default.type
+		operand.mode = .Const
 
 	case ^ast.Expr_Binary:
 		// TODO: check applicability of operator

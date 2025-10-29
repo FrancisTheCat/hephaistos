@@ -1351,6 +1351,8 @@ _cg_expr :: proc(
 		}
 	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Import, ^ast.Type_Sampler, ^ast.Type_Enum:
 		panic("tried to cg type as expression")
+	case ^ast.Expr_Config:
+		panic("tried to cg config var as expression")
 	}
 
 	fmt.panicf("unimplemented: %v", reflect.union_variant_typeid(expr.derived_expr))

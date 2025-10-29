@@ -65,6 +65,12 @@ Expr_Builtin :: struct {
 	ident:      tokenizer.Token,
 }
 
+Expr_Config :: struct {
+	using node: Expr,
+	ident:      tokenizer.Token,
+	default:    ^Expr,
+}
+
 Shader_Stage :: enum {
 	Invalid = 0,
 	Vertex,
@@ -285,6 +291,7 @@ Any_Node :: union {
 	^Expr_Cast,
 	^Expr_Unary,
 	^Expr_Builtin,
+	^Expr_Config,
 
 	^Type_Import,
 	^Type_Struct,
@@ -322,6 +329,7 @@ Any_Expr :: union {
 	^Expr_Cast,
 	^Expr_Unary,
 	^Expr_Builtin,
+	^Expr_Config,
 	
 	^Type_Import,
 	^Type_Struct,

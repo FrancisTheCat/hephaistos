@@ -408,6 +408,16 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 			i      := ast.new(ast.Type_Import, token.location, parser.end_location, parser.allocator)
 			i.ident = ident
 			return i, true
+		case "config":
+			token_expect(parser, .Open_Paren ) or_return
+			ident   := token_expect(parser, .Ident) or_return
+			token_expect(parser, .Comma) or_return
+			default := parse_expr(parser) or_return
+			token_expect(parser, .Close_Paren) or_return
+			c        := ast.new(ast.Expr_Config, token.location, parser.end_location, parser.allocator)
+			c.ident   = ident
+			c.default = default
+			return c, true
 		case:
 			error(parser, directive, "unknown directive: '%s'", directive.text)
 		}
@@ -814,7 +824,7 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 		return if_stmt, true
 	case .When:
 		token_advance(parser)
-		cond := parse_expr(parser) or_return
+		cond := parse_expr(parser, allow_compound_literals = false) or_return
 
 		token_expect(parser, .Open_Brace) or_return
 		then_block := parse_stmt_list(parser) or_return

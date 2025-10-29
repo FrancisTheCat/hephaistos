@@ -36,6 +36,10 @@ dot :: proc(a: [3]f32, b: [3]f32) -> (v: f32) {
 	return
 }
 
+SOME_CONFIG_VAR :: #config(SOME_CONFIG_VAR, false)
+
+when SOME_CONFIG_VAR { }
+
 @(fragment_shader, link_name = "main")
 fragment_main :: proc(
 	v_position:   [3]f32 @ 0,

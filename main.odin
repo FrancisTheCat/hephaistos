@@ -34,9 +34,10 @@ when ENABLE_SPALL {
 }
 
 compile_shader :: proc(
-	source: string,
-	path:   string,
-	types:  []typeid = {},
+	source:       string,
+	path:         string,
+	defines:      map[string]types.Const_Value = {},
+	shared_types: []typeid = {},
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (code: []u32, errors: []tokenizer.Error) {
@@ -53,7 +54,7 @@ compile_shader :: proc(
 	}
 
 	checker: Checker
-	checker, errors = check(stmts, types, context.temp_allocator, error_allocator)
+	checker, errors = check(stmts, defines, shared_types, context.temp_allocator, error_allocator)
 	if len(errors) != 0 {
 		return
 	}
@@ -107,10 +108,20 @@ main :: proc() {
 		A, B, C,
 	}
 
+	defines: map[string]types.Const_Value
+	defines["SOME_CONFIG_VAR"] = true
+	defer delete(defines)
+
 	file_name := "example.hep"
 	source    := string(os.read_entire_file(file_name) or_else panic(""))
 	defer delete(source)
-	code, errors := compile_shader(source, file_name, types = { Vertex_Shader_Uniforms, Shadow_Uniforms, Some_Enum, }, error_allocator = context.temp_allocator)
+	code, errors := compile_shader(
+		source,
+		file_name,
+		defines         = defines,
+		shared_types    = { Vertex_Shader_Uniforms, Shadow_Uniforms, Some_Enum, },
+		error_allocator = context.temp_allocator,
+	)
 	defer delete(code)
 
 	if len(errors) != 0 {
