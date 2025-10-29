@@ -52,7 +52,6 @@ CG_Context :: struct {
 	constant_cache:     map[types.Const_Value]struct{ id: spv.Id, type: ^types.Type, },
 	string_cache:       map[string]spv.Id,
 	type_registry:      Type_Registry,
-	builtins:           map[string]CG_Value,
 	image_types:        map[CG_Image_Type][2]spv.Id,
 
 	meta:               spv.Builder,
@@ -967,20 +966,16 @@ cg_expr_binary :: proc(
 }
 
 @(require_results)
-cg_builtin :: proc(
+cg_interface :: proc(
 	ctx:     ^CG_Context,
 	builtin: string,
 ) -> (value: CG_Value) {
 	defer ctx.referenced_globals[value.id] = {}
 
-	if cached, ok := ctx.builtins[builtin]; ok {
-		return cached
-	}
-
 	builtin, ok := reflect.enum_from_name(spv.BuiltIn, builtin)
 	assert(ok)
 
-	info := builtin_infos[builtin]
+	info := interface_infos[builtin]
 	storage_class:     CG_Storage_Class
 	spv_storage_class: spv.StorageClass
 	switch info.usage[ctx.shader_stage] {
@@ -1121,8 +1116,8 @@ _cg_expr :: proc(
 	}
 
 	switch v in expr.derived_expr {
-	case ^ast.Expr_Builtin:
-		return cg_builtin(ctx, v.ident.text)
+	case ^ast.Expr_Interface:
+		return cg_interface(ctx, v.ident.text)
 	case ^ast.Expr_Constant:
 		return cg_constant(ctx, expr.const_value)
 	case ^ast.Expr_Binary:
@@ -1204,28 +1199,56 @@ _cg_expr :: proc(
 		return { id = spv.OpVectorShuffle(builder, cg_type(ctx, v.type).type, val, val, ..indices[:]), }
 
 	case ^ast.Expr_Call:
-		if v.is_cast {
+		switch {
+		case v.builtin != nil:
+			#partial switch v.builtin {
+			case .Dot:
+				t  := types.op_result_type(v.args[0].value.type, v.args[1].value.type, false, {})
+				ti := cg_type(ctx, v.type)
+				a  := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), t)
+				b  := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), t)
+				id: spv.Id
+				#partial switch t.variant.(^types.Vector).elem.kind {
+				case .Float:
+					id = spv.OpDot (builder, ti.type, a, b)
+				case .Int:
+					id = spv.OpSDot(builder, ti.type, a, b)
+				case .Uint:
+					id = spv.OpUDot(builder, ti.type, a, b)
+				case:
+					unreachable()
+				}
+				return { id = id, }
+			case .Cross:
+				ti := cg_type(ctx, v.type)
+				a  := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
+				b  := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), v.type)
+				id := spv_glsl.OpCross(builder, ti.type, a, b)
+				return { id = id, }
+			case:
+				unimplemented()
+			}
+		case v.is_cast:
 			return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type), }
-		} else {
-			fn        := cg_expr(ctx, builder, v.lhs)
-			args      := make([]spv.Id, len(v.args))
-			proc_type := v.lhs.type.variant.(^types.Proc)
-			for &arg, i in args {
-				arg = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[i].value), proc_type.args[i].type)
-			}
-
-			return_type_info := cg_type(ctx, expr.type)
-			ret              := spv.OpFunctionCall(builder, return_type_info.type, fn.id, ..args)
-
-			if len(proc_type.returns) == 1 {
-				type_info := cg_type(ctx, proc_type.returns[0].type)
-				copy      := spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, return_type_info, .Function), .Function)
-				spv.OpStore(builder, copy, ret)
-				ptr       := spv.OpAccessChain(builder, cg_type_ptr(ctx, type_info, .Function), copy, cg_constant(ctx, i64(0)).id)
-				return { id = spv.OpLoad(builder, type_info.type, ptr), }
-			}
-			return { id = ret, }
 		}
+		fn        := cg_expr(ctx, builder, v.lhs)
+		args      := make([]spv.Id, len(v.args))
+		proc_type := v.lhs.type.variant.(^types.Proc)
+		for &arg, i in args {
+			arg = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[i].value), proc_type.args[i].type)
+		}
+
+		return_type_info := cg_type(ctx, expr.type)
+		ret              := spv.OpFunctionCall(builder, return_type_info.type, fn.id, ..args)
+
+		if len(proc_type.returns) == 1 {
+			type_info := cg_type(ctx, proc_type.returns[0].type)
+			copy      := spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, return_type_info, .Function), .Function)
+			spv.OpStore(builder, copy, ret)
+			ptr       := spv.OpAccessChain(builder, cg_type_ptr(ctx, type_info, .Function), copy, cg_constant(ctx, i64(0)).id)
+			return { id = spv.OpLoad(builder, type_info.type, ptr), }
+		}
+		return { id = ret, }
 	case ^ast.Expr_Compound:
 		if len(v.fields) == 0 {
 			return { id = cg_nil_value(ctx, cg_type(ctx, v.type)), }

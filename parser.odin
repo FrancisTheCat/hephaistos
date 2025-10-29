@@ -235,7 +235,7 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 	case .Dollar:
 		token_advance(parser)
 		ident := token_expect(parser, .Ident) or_return
-		expr := ast.new(ast.Expr_Builtin, token.location, parser.end_location, parser.allocator)
+		expr := ast.new(ast.Expr_Interface, token.location, parser.end_location, parser.allocator)
 		expr.ident = ident
 		return expr, true
 

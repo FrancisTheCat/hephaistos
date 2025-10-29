@@ -462,6 +462,11 @@ is_float :: proc(type: ^Type) -> bool {
 	return false
 }
 
+@(require_results)
+vector_len :: proc(type: ^Type) -> int {
+	return type.variant.(^Vector).count
+}
+
 @(private="file")
 to_bytes :: proc(v: $P/^$T) -> []byte {
 	return ([^]byte)(v)[:size_of(T)]

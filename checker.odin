@@ -24,7 +24,6 @@ Checker :: struct {
 
 Addressing_Mode :: enum {
 	Invalid = 0,
-	No_Value,
 	RValue,
 	LValue,
 	Const,
@@ -35,7 +34,6 @@ Addressing_Mode :: enum {
 @(rodata)
 addressing_mode_string := [Addressing_Mode]string {
 	.Invalid  = "<invalid>",
-	.No_Value = "no value",
 	.RValue   = "rvalue",
 	.LValue   = "lvalue",
 	.Const    = "const",
@@ -44,11 +42,12 @@ addressing_mode_string := [Addressing_Mode]string {
 }
 
 Operand :: struct {
-	expr:   ^ast.Expr,
-	type:   ^types.Type,
-	mode:    Addressing_Mode,
-	value:   types.Const_Value,
-	is_call: bool,
+	expr:       ^ast.Expr,
+	type:       ^types.Type,
+	mode:       Addressing_Mode,
+	value:      types.Const_Value,
+	builtin_id: ast.Builtin_Id,
+	is_call:    bool,
 }
 
 Scope_Proc_Info :: struct {
@@ -786,20 +785,33 @@ checker_init :: proc(
 
 	scope_push(checker, .Global)
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "bool" }, types.t_bool, allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "bool", }, types.t_bool, allocator = allocator))
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "i8"   }, types.t_i8 ,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "i16"  }, types.t_i16,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "i32"  }, types.t_i32,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "i64"  }, types.t_i64,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "i8",   }, types.t_i8 ,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "i16",  }, types.t_i16,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "i32",  }, types.t_i32,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "i64",  }, types.t_i64,  allocator = allocator))
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "u8"   }, types.t_u8 ,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "u16"  }, types.t_u16,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "u32"  }, types.t_u32,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "u64"  }, types.t_u64,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "u8",   }, types.t_u8 ,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "u16",  }, types.t_u16,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "u32",  }, types.t_u32,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "u64",  }, types.t_u64,  allocator = allocator))
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "f32"  }, types.t_f32,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "f64"  }, types.t_f64,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "f32",  }, types.t_f32,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "f64",  }, types.t_f64,  allocator = allocator))
+
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "dot",       }, nil, builtin_id = .Dot,       allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "cross",     }, nil, builtin_id = .Cross,     allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "min",       }, nil, builtin_id = .Min,       allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "max",       }, nil, builtin_id = .Max,       allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "clamp",     }, nil, builtin_id = .Clamp,     allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "inverse",   }, nil, builtin_id = .Inverse,   allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "transpose", }, nil, builtin_id = .Transpose, allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "pow",       }, nil, builtin_id = .Pow,       allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "sqrt",      }, nil, builtin_id = .Sqrt,      allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "sin",       }, nil, builtin_id = .Sin,       allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "cos",       }, nil, builtin_id = .Cos,       allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "tan",       }, nil, builtin_id = .Tan,       allocator = allocator))
 
 	checker.shared_types.allocator = allocator
 	for s in shared_types {
@@ -1287,22 +1299,25 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			operand.mode  = .Const
 			operand.value = e.value
 		case .Type:
-			operand.mode  = .Type
+			operand.mode = .Type
 		case .Var:
-			operand.mode  = .LValue
+			operand.mode = .LValue
 		case .Param:
-			operand.mode  = .RValue
+			operand.mode = .RValue
+		case .Builtin:
+			operand.mode       = .Builtin
+			operand.builtin_id = e.builtin_id
 		case .Proc:
 		}
 
-	case ^ast.Expr_Builtin:
+	case ^ast.Expr_Interface:
 		e, ok := reflect.enum_from_name(spv.BuiltIn, v.ident.text)
 		if !ok {
 			error(checker, v.ident, "unknown builtin: '%s'", v.ident.text)
 			return
 		}
 
-		if info, ok := builtin_infos[e]; ok {
+		if info, ok := interface_infos[e]; ok {
 			switch info.usage[checker.shader_stage] {
 			case nil:
 				error(checker, v.ident, "builtin %s can not be used in %s", v.ident.text, ast.shader_stage_names[checker.shader_stage])
@@ -1311,7 +1326,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			case .Out:
 				operand.mode = .LValue
 			}
-			operand.type = builtin_infos[e].type
+			operand.type = info.type
 		} else {
 			error(checker, v.ident, "unknown builtin: '%s'", v.ident.text)
 			return
@@ -1446,12 +1461,73 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		}
 
 	case ^ast.Expr_Call:
-		operand.is_call = true
+		fn := check_expr_internal(checker, v.lhs, {})
+		#partial switch fn.mode {
+		case .Invalid:
+			return
+		case .Builtin:
+			v.builtin = fn.builtin_id
+			
+			args := make([]Operand, len(v.args), context.temp_allocator)
+			for &arg, i in args {
+				arg = check_expr(checker, v.args[i].value)
+			}
 
-		fn := check_expr_or_type(checker, v.lhs)
-		if fn.mode == .Type {
-			v.is_cast       = true
-			operand.is_call = false
+			switch v.builtin {
+			case .Invalid:
+				panic("invalid builtin")
+			case .Dot:
+				if len(v.args) != 2 {
+					error(checker, v, "builtin 'dot' expects two arguments, got %d", len(v.args))
+					break
+				}
+				a    := args[0]
+				b    := args[1]
+				type := types.op_result_type(a.type, b.type, false, checker.allocator)
+				if !types.is_vector(type) {
+					error(checker, v, "builtin 'dot' expects two vectors of the same type, got %v and %v", a.type, b.type)
+					break
+				}
+				operand.type = type.variant.(^types.Vector).elem
+				operand.mode = .RValue
+			case .Cross:
+				if len(v.args) != 2 {
+					error(checker, v, "builtin 'cross' expects two arguments, got %d", len(v.args))
+					break
+				}
+				a    := args[0]
+				b    := args[1]
+				type := types.op_result_type(a.type, b.type, false, {})
+				if vec, ok := type.variant.(^types.Vector); !ok || vec.count != 3 || !types.is_float(vec.elem) {
+					error(checker, v, "builtin 'cross' expects two 3 dimensional vectors of floats, got %v and %v", a.type, b.type)
+					break
+				}
+				operand.type = type
+				operand.mode = .RValue
+			case .Min:
+				unimplemented()
+			case .Max:
+				unimplemented()
+			case .Clamp:
+				unimplemented()
+			case .Inverse:
+				unimplemented()
+			case .Transpose:
+				unimplemented()
+			case .Pow:
+				unimplemented()
+			case .Sqrt:
+				unimplemented()
+			case .Sin:
+				unimplemented()
+			case .Cos:
+				unimplemented()
+			case .Tan:
+				unimplemented()
+			}
+			
+		case .Type:
+			v.is_cast = true
 			
 			if len(v.args) != 1 {
 				error(checker, v, "too many arguments in cast to %v", fn.type)
@@ -1463,7 +1539,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			}
 			operand.type = fn.type
 			operand.mode = .RValue
-		} else {
+		case:
 			if fn.type.kind != .Proc {
 				error(checker, v, "expected a procedure in call expression")
 				return
@@ -1884,8 +1960,6 @@ check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast
 	switch operand.mode {
 	case .RValue, .LValue, .Const, .Type:
 		return
-	case .No_Value:
-		error(checker, operand, "expected an expression, got no value")
 	case .Builtin:
 		error(checker, operand, "expected an expression, got builtin")
 	case .Invalid:
@@ -1902,8 +1976,6 @@ check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 	switch operand.mode {
 	case .RValue, .LValue, .Const:
 		return
-	case .No_Value:
-		error(checker, operand, "expected an expression, got no value")
 	case .Builtin:
 		error(checker, operand, "expected an expression, got builtin")
 	case .Type:
@@ -1921,8 +1993,6 @@ check_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 	switch operand.mode {
 	case .RValue, .LValue, .Const:
 		error(checker, operand, "expected a type, got expression")
-	case .No_Value:
-		error(checker, operand, "expected a type, got no value")
 	case .Builtin:
 		error(checker, operand, "expected a type, got builtin")
 	case .Type:

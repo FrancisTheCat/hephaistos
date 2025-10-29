@@ -60,7 +60,7 @@ Expr_Ident :: struct {
 	ident:      tokenizer.Token,
 }
 
-Expr_Builtin :: struct {
+Expr_Interface :: struct {
 	using node: Expr,
 	ident:      tokenizer.Token,
 }
@@ -104,11 +104,28 @@ Expr_Proc_Sig :: struct {
 	returns:    []Field,
 }
 
+Builtin_Id :: enum {
+	Invalid = 0,
+	Dot,
+	Cross,
+	Min,
+	Max,
+	Clamp,
+	Inverse,
+	Transpose,
+	Pow,
+	Sqrt,
+	Sin,
+	Cos,
+	Tan,
+}
+
 Expr_Call :: struct {
 	using node: Expr,
 	lhs:       ^Expr,
 	args:     []Field,
 	is_cast:    bool,
+	builtin:    Builtin_Id,
 }
 
 Expr_Paren :: struct {
@@ -290,7 +307,7 @@ Any_Node :: union {
 	^Expr_Index,
 	^Expr_Cast,
 	^Expr_Unary,
-	^Expr_Builtin,
+	^Expr_Interface,
 	^Expr_Config,
 
 	^Type_Import,
@@ -328,7 +345,7 @@ Any_Expr :: union {
 	^Expr_Index,
 	^Expr_Cast,
 	^Expr_Unary,
-	^Expr_Builtin,
+	^Expr_Interface,
 	^Expr_Config,
 	
 	^Type_Import,
