@@ -107,7 +107,7 @@ main :: proc() {
 		A, B, C,
 	}
 
-	file_name := "test.hep"
+	file_name := "example.hep"
 	source    := string(os.read_entire_file(file_name) or_else panic(""))
 	defer delete(source)
 	code, errors := compile_shader(source, file_name, types = { Vertex_Shader_Uniforms, Shadow_Uniforms, Some_Enum, }, error_allocator = context.temp_allocator)
