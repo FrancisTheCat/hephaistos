@@ -1406,7 +1406,7 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 
 		iter_type := v.variable.type
 		iter_ti   := cg_type(ctx, v.variable.type)
-		iter_var  := spv.OpVariable(builder, cg_type_ptr(ctx, iter_ti, .Function), .Function)
+		iter_var  := spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, iter_ti, .Function), .Function)
 		iter_init := cg_cast(ctx, builder, cg_expr(ctx, builder, v.start_expr), iter_type)
 		spv.OpStore(builder, iter_var, iter_init)
 
