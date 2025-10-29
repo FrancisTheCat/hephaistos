@@ -40,11 +40,20 @@ Type_Hash_Entry :: struct {
 
 Type_Registry :: [][dynamic]Type_Hash_Entry
 
+CG_Image_Type :: struct {
+	dimensions:   int,
+	sampled_type: struct {
+		size: int,
+		kind: types.Kind,
+	},
+}
+
 CG_Context :: struct {
 	constant_cache:     map[types.Const_Value]struct{ id: spv.Id, type: ^types.Type, },
 	string_cache:       map[string]spv.Id,
 	type_registry:      Type_Registry,
 	builtins:           map[string]CG_Value,
+	image_types:        map[CG_Image_Type][2]spv.Id,
 
 	meta:               spv.Builder,
 	memory_model:       spv.Builder,
@@ -567,8 +576,23 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, explicit_layout := false) -
 			assert(types.is_vector(type.texel_type))
 			sampled_type = type.texel_type.variant.(^types.Vector).elem
 		}
+		image_type := CG_Image_Type {
+			dimensions   = type.dimensions,
+			sampled_type = {
+				size = sampled_type.size,
+				kind = sampled_type.kind,
+			},
+		}
+
+		if cached, ok := ctx.image_types[image_type]; ok {
+			info.image_type = cached[0]
+			info.type       = cached[1]
+			break
+		}
+
 		info.image_type = spv.OpTypeImage(&ctx.types, cg_type(ctx, sampled_type).type, spv.Dim(type.dimensions - 1), 0, 0, 0, 1, .Unknown)
 		info.type       = spv.OpTypeSampledImage(&ctx.types, info.image_type)
+		ctx.image_types[image_type] = { info.image_type, info.type, }
 	}
 
 	return info
