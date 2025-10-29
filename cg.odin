@@ -636,7 +636,7 @@ cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
 			spv.OpName(&ctx.debug_b, return_value, "$return_tuple")
 			for ret, i in type.returns {
 				type_info := cg_type(ctx, ret.type)
-				id        := spv.OpAccessChain(&ctx.functions, cg_type_ptr(ctx, type_info, .Function), return_value, cg_constant(ctx, i64(i)).id)
+				id        := spv.OpAccessChain(&body, cg_type_ptr(ctx, type_info, .Function), return_value, cg_constant(ctx, i64(i)).id)
 				name      := ret.name.text
 				if ret.value != nil {
 					init := cg_constant(ctx, ret.value)
