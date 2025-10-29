@@ -500,13 +500,12 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		v.types = make([]^types.Type, len(v.lhs), checker.allocator)
 
 		if len(values) == 0 {
-			type := check_type(checker, v.type_expr)
 			for name in names {
 				entity_kind := Entity_Kind.Var
-				scope_insert_entity(checker, entity_new(entity_kind, name, type, decl = v, allocator = checker.allocator))
+				scope_insert_entity(checker, entity_new(entity_kind, name, explicit_type, decl = v, allocator = checker.allocator))
 			}
 			for &t in v.types {
-				t = type
+				t = explicit_type
 			}
 			return
 		}
@@ -1681,12 +1680,17 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		operand.mode = .Type
 	case ^ast.Type_Array:
 		count := check_expr(checker, v.count)
-		if count.mode != .Const || (count.type.kind != .Int && count.type.kind != .Uint) {
+		if c, ok := count.value.(i64); ok {
+			if c < 2 || c > 4 {
+				error(checker, count, "vector size has to be between 2 and 4, got %d", c)
+				return
+			}
+			operand.type = types.vector_new(types.default_type(check_type(checker, v.elem)), int(c), checker.allocator)
+			operand.mode = .Type
+		} else {
 			error(checker, count, "expected a constant integer as the count of an array")
 		}
 
-		operand.type = types.vector_new(types.default_type(check_type(checker, v.elem)), int(count.value.(i64) or_else 0), checker.allocator)
-		operand.mode = .Type
 	case ^ast.Type_Struct:
 		operand.mode = .Type
 
@@ -1738,10 +1742,12 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		if dim, ok := dimensions.value.(i64); ok {
 			if dim < 1 || dim > 3 {
 				error(checker, dimensions, "sampler dimension has to be between 1 and 3, got %d", dim)
+				return
 			}
 			texel_type := types.default_type(check_type(checker, v.texel_type))
 			if !(types.is_numeric(texel_type) || types.is_vector(texel_type)) {
 				error(checker, v.texel_type, "texel type of sampler has to be either a numeric type or a vector, got: %v", texel_type)
+				return
 			}
 			operand.type = types.sampler_new(texel_type, int(dim), checker.allocator)
 			operand.mode = .Type

@@ -558,7 +558,7 @@ vector_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Vector
 @(require_results)
 sampler_new :: proc(texel_type: ^Type, dimensions: int, allocator: mem.Allocator) -> ^Sampler {
 	assert(texel_type      != nil)
-	assert(texel_type.size != 0)
+	assert(texel_type.size != 0 || texel_type.kind == .Invalid)
 
 	type           := new(.Sampler, Sampler, allocator)
 	type.texel_type = texel_type

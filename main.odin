@@ -10,6 +10,7 @@ import "core:prof/spall"
 import "core:strings"
 import "core:slice"
 import "core:terminal/ansi"
+import glm "core:math/linalg/glsl"
 
 import "ast"
 import "tokenizer"
@@ -93,16 +94,19 @@ main :: proc() {
 	})
 	defer delete(user_formatters)
 
-	Vertex_Shader_Constants :: struct {
-		view:       matrix[4, 4]f32,
-		projection: matrix[4, 4]f32,
-		model:      matrix[4, 4]f32,
+	Vertex_Shader_Uniforms :: struct {
+		view, proj, model: glm.mat4,
+	}
+
+	Shadow_Uniforms :: struct {
+		shadow_matrix:   glm.mat4,
+		light_direction: glm.vec3,
 	}
 
 	file_name := "test.hep"
 	source    := string(os.read_entire_file(file_name) or_else panic(""))
 	defer delete(source)
-	code, errors := compile_shader(source, file_name, types = { Vertex_Shader_Constants, }, error_allocator = context.temp_allocator)
+	code, errors := compile_shader(source, file_name, types = { Vertex_Shader_Uniforms, Shadow_Uniforms, }, error_allocator = context.temp_allocator)
 	defer delete(code)
 
 	if len(errors) != 0 {
