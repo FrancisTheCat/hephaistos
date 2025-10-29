@@ -1251,17 +1251,35 @@ _cg_expr :: proc(
 
 		if lhs.storage_class != nil {
 			if types.is_sampler(lhs.type) {
-				sampler := lhs.type.variant.(^types.Sampler)
-				image   := cg_deref(ctx, builder, lhs)
-				id      := spv.OpImageSampleImplicitLod(
-					builder,
-					cg_type(ctx, sampler.texel_type).type,
-					image,
-					rhs.id,
-				)
-				return { id = id, }
+				sampler    := lhs.type.variant.(^types.Sampler)
+				count      := 1
+				texel_type := sampler.texel_type
+				if v, ok := sampler.texel_type.variant.(^types.Vector); ok {
+					count = v.count
+					if v.count != 4 {
+						texel_type = types.vector_new(v.elem, 4, context.temp_allocator)
+					}
+				} else {
+					texel_type = types.vector_new(sampler.texel_type, 4, context.temp_allocator)
+				}
+
+				image := cg_deref(ctx, builder, lhs)
+				texel := spv.OpImageSampleImplicitLod(builder, cg_type(ctx, texel_type).type, image, rhs.id)
+				
+				switch count {
+				case 1:
+					return { id = spv.OpVectorExtractDynamic(builder, cg_type(ctx, v.type).type, texel, cg_constant(ctx, i64(0)).id), }
+				case 2:
+					indices := [2]u32{ 0, 1, }
+					return { id = spv.OpVectorShuffle(builder, cg_type(ctx, v.type).type, texel, texel, ..indices[:]), }
+				case 3:
+					indices := [3]u32{ 0, 1, 2, }
+					return { id = spv.OpVectorShuffle(builder, cg_type(ctx, v.type).type, texel, texel, ..indices[:]), }
+				case 4:
+					return { id = texel, }
+				}
 			}
-			id    := spv.OpAccessChain(builder, cg_type_ptr(ctx, v.type, lhs.storage_class), lhs.id, rhs.id)
+			id := spv.OpAccessChain(builder, cg_type_ptr(ctx, v.type, lhs.storage_class), lhs.id, rhs.id)
 			value := CG_Value { id = id, storage_class = lhs.storage_class, }
 			return value
 		}
