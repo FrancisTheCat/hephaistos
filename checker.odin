@@ -903,7 +903,19 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 	case reflect.Type_Info_Union:
 		panic("union types can not be shared")
 	case reflect.Type_Info_Enum:
-		return type_info_to_type(v.base, allocator)
+		e      := types.new(.Enum, types.Enum, allocator)
+		values := make([]types.Enum_Value, len(v.values), allocator)
+		for value, i in v.values {
+			values[i] = {
+				value = int(value),
+				name  = { text = v.names[i], },
+			}
+		}
+		e.backing = type_info_to_type(v.base, allocator)
+		e.size    = e.backing.size
+		e.align   = e.backing.align
+		e.values  = values
+		return e
 	case reflect.Type_Info_Map:
 		panic("map types can not be shared")
 	case reflect.Type_Info_Bit_Set:

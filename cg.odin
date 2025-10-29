@@ -1296,7 +1296,7 @@ _cg_expr :: proc(
 				}
 
 				image := cg_deref(ctx, builder, lhs)
-				texel := spv.OpImageSampleImplicitLod(builder, cg_type(ctx, texel_type).type, image, rhs.id)
+				texel := spv.OpImageSampleExplicitLod(builder, cg_type(ctx, texel_type).type, image, rhs.id, { .Lod, }, u32(cg_constant(ctx, f64(0)).id))
 				
 				switch count {
 				case 1:
@@ -1592,29 +1592,37 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 		body_block := &spv.Builder{ current_id = &ctx.current_id, }
 		end_block  := &spv.Builder{ current_id = &ctx.current_id, }
 		end_label  := spv.OpLabel(end_block)
+		spv.OpSelectionMerge(builder, end_label, {})
 
 		default := end_label
 
-		targets := make([dynamic]struct {
-			literal: u32,
-			id:      spv.Id,
-		}, 0, len(v.cases))
-		for c in v.cases {
-			if c.value == nil {
-				default = cg_scope(ctx, body_block, c.body, end_label)
-				continue
+		if v.cond.type.size == 8 {
+			targets := make([dynamic]spv.Pair(u64, spv.Id), 0, len(v.cases))
+			for c in v.cases {
+				if c.value == nil {
+					default = cg_scope(ctx, body_block, c.body, end_label)
+					continue
+				}
+				append(&targets, spv.Pair(u64, spv.Id) {
+					a = u64(c.value.const_value.(i64)),
+					b = cg_scope(ctx, body_block, c.body, end_label),
+				})
 			}
-			append(&targets, struct {
-				literal: u32,
-				id:      spv.Id,
-			} {
-				literal = u32(c.value.const_value.(i64)),
-				id      = cg_scope(ctx, body_block, c.body, end_label),
-			})
+			spv.OpSwitch(builder, cond.id, default, ..targets[:])
+		} else {
+			targets := make([dynamic]spv.Pair(u32, spv.Id), 0, len(v.cases))
+			for c in v.cases {
+				if c.value == nil {
+					default = cg_scope(ctx, body_block, c.body, end_label)
+					continue
+				}
+				append(&targets, spv.Pair(u32, spv.Id) {
+					a = u32(c.value.const_value.(i64)),
+					b = cg_scope(ctx, body_block, c.body, end_label),
+				})
+			}
+			spv.OpSwitch(builder, cond.id, default, ..targets[:])
 		}
-
-		spv.OpSelectionMerge(builder, end_label, {})
-		spv.OpSwitch(builder, cond.id, default, ..targets[:])
 
 		append(&builder.data, ..body_block.data[:])
 		append(&builder.data, ..end_block.data[:])
