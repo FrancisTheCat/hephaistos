@@ -738,7 +738,14 @@ cg_expr_binary :: proc(
 	type_info := cg_type(ctx, type)
 
 	if op_is_relation(op) {
-		t := types.op_result_type(lhs_type, rhs_type, false, {})
+		t: ^types.Type
+		if lhs_type.kind == .Float {
+			t   = lhs_type
+			rhs = cg_cast(ctx, builder, { id = rhs, type = rhs_type, }, t)
+		} else {
+			t   = rhs_type
+			lhs = cg_cast(ctx, builder, { id = lhs, type = lhs_type, }, t)
+		}
 		#partial switch t.kind {
 		case .Int:
 			#partial switch op {
