@@ -97,7 +97,7 @@ cg_lookup_entity :: proc(ctx: ^CG_Context, name: string) -> ^CG_Entity {
 			return e
 		}
 	}
-	unreachable()
+	panic("cg_lookup_entity failed")
 }
 
 cg_insert_entity :: proc(ctx: ^CG_Context, name: string, storage_class: CG_Storage_Class, type: ^types.Type, id: spv.Id) {
@@ -1409,6 +1409,8 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 		iter_var  := spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, iter_ti, .Function), .Function)
 		iter_init := cg_cast(ctx, builder, cg_expr(ctx, builder, v.start_expr), iter_type)
 		spv.OpStore(builder, iter_var, iter_init)
+
+		cg_insert_entity(ctx, v.variable.derived_expr.(^ast.Expr_Ident).ident.text, .Function, v.variable.type, iter_var)
 
 		body_builder   := &spv.Builder{ current_id = &ctx.current_id, }
 		header_builder := &spv.Builder{ current_id = &ctx.current_id, }
