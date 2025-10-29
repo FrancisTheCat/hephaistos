@@ -16,6 +16,11 @@ Field :: struct {
 	location: int,
 }
 
+Enum_Value :: struct {
+	name:  tokenizer.Token,
+	value: int,
+}
+
 Const_Value :: union {
 	i64,
 	f64,
@@ -53,6 +58,12 @@ Sampler :: struct {
 	texel_type: ^Type,
 }
 
+Enum :: struct {
+	using base: Type,
+	values:     []Enum_Value,
+	backing:    ^Type,
+}
+
 Kind :: enum {
 	Invalid,
 
@@ -66,6 +77,7 @@ Kind :: enum {
 	Vector,
 	Proc,
 	Sampler,
+	Enum,
 
 	Tuple,
 }
@@ -80,6 +92,7 @@ Type :: struct {
 		^Vector,
 		^Proc,
 		^Sampler,
+		^Enum,
 	},
 }
 
@@ -129,6 +142,18 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 			fmt.wprint(w, field.name.text)
 			fmt.wprint(w, ": ")
 			print_writer(w, field.type)
+		}
+		fmt.wprint(w, "}")
+	case .Enum:
+		e := type.variant.(^Enum)
+		fmt.wprint(w, "enum {")
+		for field, i in e.values {
+			if i > 0 {
+				fmt.wprint(w, ", ")
+			}
+			fmt.wprint(w, field.name.text)
+			fmt.wprint(w, " = ")
+			fmt.wprint(w, field.value)
 		}
 		fmt.wprint(w, "}")
 	case .Matrix:
@@ -278,11 +303,18 @@ equal :: proc(a, b: ^Type) -> bool {
 @(require_results)
 base_type :: proc(type: ^Type) -> ^Type {
 	type := type
-	for type.kind == .Tuple {
-		t := type.variant.(^Struct)
-		if len(t.fields) == 1 {
-			type = t.fields[0].type
-		} else {
+	for {
+		#partial switch type.kind {
+		case .Tuple: 
+			// t := type.variant.(^Struct)
+			// if len(t.fields) == 1 {
+			// 	type = t.fields[0].type
+			// } else {
+				return type
+			// }
+		case .Enum:
+			type = type.variant.(^Enum).backing
+		case:
 			return type
 		}
 	}
@@ -335,7 +367,7 @@ op_result_type :: proc(a, b: ^Type, is_multiply: bool, allocator: mem.Allocator)
 
 @(require_results)
 default_type :: proc(type: ^Type) -> ^Type {
-	type := base_type(type)
+	// type := base_type(type)
 
 	if type == nil || type.size != 0 {
 		return type
@@ -351,7 +383,7 @@ default_type :: proc(type: ^Type) -> ^Type {
 	case .Float:
 		return t_f32
 
-	case .Proc, .Invalid, .Struct, .Matrix, .Vector:
+	case .Proc, .Invalid, .Struct, .Matrix, .Vector, .Enum:
 		return type
 	}
 
@@ -459,7 +491,11 @@ type_hash :: proc(type: ^Type, seed: u64 = 0xcbf29ce484222325) -> u64 {
 		}
 	case ^Sampler:
 		h = type_hash(v.texel_type, h)
-		h = hash.fnv64a(to_bytes(&v.dimensions))
+		h = hash.fnv64a(to_bytes(&v.dimensions), h)
+	case ^Enum:
+		for &val in v.values {
+			h = hash.fnv64a(to_bytes(&val.value), h)
+		}
 	}
 	
 	return h

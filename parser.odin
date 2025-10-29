@@ -73,6 +73,7 @@ parse_field_list :: proc(
 	terminator:           tokenizer.Token_Kind,
 	allow_default_values: bool,
 	allow_locations := false,
+	types           := true,
 ) -> (_fields: []ast.Field, ok: bool) {
 	fields := make([dynamic]ast.Field, parser.allocator)
 
@@ -82,11 +83,13 @@ parse_field_list :: proc(
 			break loop
 		}
 		ident := token_expect(parser, .Ident) or_return
-		token_expect(parser, .Colon) or_return
-
 		type: ^ast.Expr
-		if token_peek(parser).kind != .Assign {
-			type = parse_expr(parser) or_return
+		if types {
+			token_expect(parser, .Colon) or_return
+
+			if token_peek(parser).kind != .Assign {
+				type = parse_expr(parser) or_return
+			}
 		}
 
 		value: ^ast.Expr
@@ -295,6 +298,14 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 		}
 		return s, true
 
+	case .Enum:
+		token_advance(parser)
+		token_expect(parser, .Open_Brace) or_return
+		values := parse_field_list(parser, .Close_Brace, false, types = false) or_return
+		s      := ast.new(ast.Type_Enum, token.location, parser.end_location, parser.allocator)
+		s.values = values
+		return s, true
+
 	case .Matrix:
 		token_advance(parser)
 		token_expect(parser, .Open_Bracket) or_return
@@ -400,6 +411,13 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 		case:
 			error(parser, directive, "unknown directive: '%s'", directive.text)
 		}
+	case .Period:
+		token_advance(parser)
+		ident     := token_expect(parser, .Ident) or_return
+		s         := ast.new(ast.Expr_Selector, token.location, parser.end_location, parser.allocator)
+		s.lhs      = nil
+		s.selector = ident
+		return s, true
 	}
 
 	error(parser, token, "unexpected token")
@@ -479,10 +497,10 @@ parse_expr :: proc(parser: ^Parser, min_power := 0, allow_compound_literals := t
 	return lhs, true
 }
 
-parse_expr_list :: proc(parser: ^Parser) -> (exprs: []^ast.Expr, ok: bool) {
+parse_expr_list :: proc(parser: ^Parser, allow_compound_literals := true) -> (exprs: []^ast.Expr, ok: bool) {
 	es := make([dynamic]^ast.Expr, parser.allocator)
 	for token_peek(parser).kind != .EOF {
-		append(&es, parse_expr(parser) or_return)
+		append(&es, parse_expr(parser, allow_compound_literals = allow_compound_literals) or_return)
 		if token_peek(parser).kind == .Comma {
 			token_advance(parser)
 		} else {
@@ -496,12 +514,12 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 	token := token_peek(parser)
 	#partial switch token.kind {
 	case .Literal:
-		expr := parse_expr(parser) or_return
+		expr := parse_expr(parser, allow_compound_literals = false) or_return
 		se   := ast.new(ast.Stmt_Expr, token.location, parser.end_location, parser.allocator)
 		se.expr = expr
 		return se, true
 	case .Ident, .Cast, .Open_Paren, .Dollar:
-		lhs := parse_expr_list(parser) or_return
+		lhs := parse_expr_list(parser, false) or_return
 		#partial switch t := token_peek(parser); t.kind {
 		case .Assign:
 			assign_token := token_advance(parser)
@@ -773,7 +791,7 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 			}
 			init = s
 			token_expect(parser, .Semicolon) or_return
-			cond = parse_expr(parser) or_return
+			cond = parse_expr(parser, allow_compound_literals = false) or_return
 		}
 
 		token_expect(parser, .Open_Brace) or_return
@@ -827,7 +845,7 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 			}
 			init = s
 			token_expect(parser, .Semicolon) or_return
-			cond = parse_expr(parser) or_return
+			cond = parse_expr(parser, allow_compound_literals = false) or_return
 		}
 
 		token_expect(parser, .Open_Brace) or_return

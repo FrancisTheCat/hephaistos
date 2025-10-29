@@ -470,6 +470,7 @@ cg_type_ptr_from_type_info :: proc(ctx: ^CG_Context, type: ^types.Type, storage_
 @(require_results)
 cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, explicit_layout := false) -> ^CG_Type_Info {
 	assert(type != nil)
+	type := types.base_type(type)
 
 	registry := &ctx.type_registry
 	info, ok := register_type(registry, type, explicit_layout)
@@ -1348,7 +1349,7 @@ _cg_expr :: proc(
 		case .Add:
 			return e
 		}
-	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Import, ^ast.Type_Sampler:
+	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Import, ^ast.Type_Sampler, ^ast.Type_Enum:
 		panic("tried to cg type as expression")
 	}
 
@@ -1583,6 +1584,40 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 	case ^ast.Stmt_Switch:
 		cg_scope_push(ctx, v.label.text)
 		defer cg_scope_pop(ctx)
+
+		cg_stmt(ctx, builder, v.init)
+		cond := cg_expr(ctx, builder, v.cond)
+		assert(v.constant_cases)
+
+		body_block := &spv.Builder{ current_id = &ctx.current_id, }
+		end_block  := &spv.Builder{ current_id = &ctx.current_id, }
+		end_label  := spv.OpLabel(end_block)
+
+		default := end_label
+
+		targets := make([dynamic]struct {
+			literal: u32,
+			id:      spv.Id,
+		}, 0, len(v.cases))
+		for c in v.cases {
+			if c.value == nil {
+				default = cg_scope(ctx, body_block, c.body, end_label)
+				continue
+			}
+			append(&targets, struct {
+				literal: u32,
+				id:      spv.Id,
+			} {
+				literal = u32(c.value.const_value.(i64)),
+				id      = cg_scope(ctx, body_block, c.body, end_label),
+			})
+		}
+
+		spv.OpSelectionMerge(builder, end_label, {})
+		spv.OpSwitch(builder, cond.id, default, ..targets[:])
+
+		append(&builder.data, ..body_block.data[:])
+		append(&builder.data, ..end_block.data[:])
 
 	case ^ast.Stmt_Assign:
 		lhs_i := 0

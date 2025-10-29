@@ -164,6 +164,13 @@ Type_Sampler :: struct {
 	texel_type: ^Expr,
 }
 
+Type_Enum :: struct {
+	using node: Expr,
+	values:     []Field,
+	backing:    ^Expr,
+}
+
+
 Decl_Value :: struct {
 	using node:     Decl,
 	lhs:            []^Expr,
@@ -243,11 +250,12 @@ Switch_Case :: struct {
 }
 
 Stmt_Switch :: struct {
-	using node: Stmt,
-	label:      tokenizer.Token,
-	init:       ^Stmt,
-	cond:       ^Expr,
-	cases:      []Switch_Case,
+	using node:     Stmt,
+	label:          tokenizer.Token,
+	init:           ^Stmt,
+	cond:           ^Expr,
+	cases:          []Switch_Case,
+	constant_cases: bool,
 }
 
 Stmt_Assign :: struct {
@@ -283,6 +291,7 @@ Any_Node :: union {
 	^Type_Array,
 	^Type_Matrix,
 	^Type_Sampler,
+	^Type_Enum,
 
 	^Stmt_Return,
 	^Stmt_Break,
@@ -319,6 +328,7 @@ Any_Expr :: union {
 	^Type_Array,
 	^Type_Matrix,
 	^Type_Sampler,
+	^Type_Enum,
 }
 
 Any_Decl :: union {

@@ -322,9 +322,10 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			check_stmt(checker, v.init)
 		}
 
-		cond := check_expr(checker, v.cond)
-		cond.type = types.default_type(cond.type)
-		seen_default := false
+		cond            := check_expr(checker, v.cond)
+		cond.type        = types.default_type(cond.type)
+		seen_default    := false
+		v.constant_cases = true
 		for c in v.cases {
 			if c.value == nil {
 				if seen_default {
@@ -342,9 +343,12 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			scope_push(checker, .Switch).label = v.label
 			defer scope_pop(checker)
 
-			value := check_expr(checker, c.value)
+			value := check_expr(checker, c.value, type_hint = cond.type)
 			if !types.implicitly_castable(value.type, cond.type) {
 				error(checker, value, "type of case value does not match selector type: %v vs %v", cond.type, value.type)
+			}
+			if value.mode != .Const {
+				v.constant_cases = false
 			}
 			check_stmt_list(checker, c.body)
 		}
@@ -1330,6 +1334,29 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 	case ^ast.Expr_Paren:
 		return check_expr_internal(checker, v.expr, {})
 	case ^ast.Expr_Selector:
+		if v.lhs == nil {
+			if type_hint == nil {
+				error(checker, v, "missing type in implicit selector")
+				return
+			}
+
+			if type_hint.kind != .Enum {
+				error(checker, v, "implicit selectors can only be used for enum types, got %v", type_hint)
+				return
+			}
+
+			for val in type_hint.variant.(^types.Enum).values {
+				if val.name.text == v.selector.text {
+					operand.type  = type_hint
+					operand.value = i64(val.value)
+					operand.mode  = .Const
+					return
+				}
+			}
+
+			error(checker, v, "%s is not a variant of the enum type %v", v.selector.text, type_hint)
+			return
+		}
 		lhs := check_expr(checker, v.lhs)
 		if lhs.type.kind == .Vector {
 			for char in v.selector.text {
@@ -1726,6 +1753,59 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		type.fields = fields[:]
 		type.size   = offset
 		type.align  = align
+
+		operand.type = type
+		operand.mode = .Type
+	case ^ast.Type_Enum:
+		operand.mode = .Type
+
+		type          := types.new(.Enum, types.Enum, checker.allocator)
+		values        := make([dynamic]types.Enum_Value, 0, len(v.values), checker.allocator)
+		values_seen   := make(map[string]struct{}, context.temp_allocator)
+		max_value     := 0
+		min_value     := 0
+		current_value := 0
+		for value in v.values {
+			if value.ident.text in values_seen {
+				error(checker, value.ident, "duplicate enum value name: '%s'", value.ident.text)
+			}
+			values_seen[value.ident.text] = {}
+
+			if value.value == nil {
+				append(&values, types.Enum_Value {
+					name  = value.ident,
+					value = current_value,
+				})
+				max_value      = max(max_value, current_value)
+				current_value += 1
+				continue
+			}
+
+			enum_value := check_expr(checker, value.value)
+			if val, ok := enum_value.value.(i64); ok {
+				append(&values, types.Enum_Value {
+					name  = value.ident,
+					value = int(val),
+				})
+				max_value     = max(max_value, int(val))
+				min_value     = min(min_value, int(val))
+				current_value = int(val)
+			} else {
+				error(checker, enum_value, "enum value has to be a constant integer")
+			}
+		}
+
+		backing: ^types.Type
+		if v.backing != nil {
+			backing = check_type(checker, v.backing)
+		} else {
+			backing = types.t_i32
+		}
+
+		type.values  = values[:]
+		type.size    = backing.size
+		type.align   = backing.align
+		type.backing = backing
 
 		operand.type = type
 		operand.mode = .Type
