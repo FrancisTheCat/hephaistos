@@ -1417,7 +1417,27 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			error(checker, v, "%s is not a variant of the enum type %v", v.selector.text, type_hint)
 			return
 		}
-		lhs := check_expr(checker, v.lhs)
+		lhs := check_expr_or_type(checker, v.lhs)
+
+		if lhs.mode == .Type {
+			if lhs.type.kind != .Enum {
+				error(checker, v, "expected an expression or an enum type, got %v", lhs.type)
+				return
+			}
+
+			for val in lhs.type.variant.(^types.Enum).values {
+				if val.name.text == v.selector.text {
+					operand.type  = lhs.type
+					operand.value = i64(val.value)
+					operand.mode  = .Const
+					return
+				}
+			}
+
+			error(checker, v, "%s is not a variant of the enum type %v", v.selector.text, type_hint)
+			return
+		}
+
 		if lhs.type.kind == .Vector {
 			for char in v.selector.text {
 				index: int = -1
@@ -1447,23 +1467,16 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			return
 		}
 
-		if lhs.type.kind != .Struct {
-			error(checker, v, "expression of type %v has no field called '%s'", lhs.type, v.selector.text)
-			return
-		}
-
-		found := false
-		for field in lhs.type.variant.(^types.Struct).fields {
-			if field.name.text == v.selector.text {
-				operand.type = field.type
-				operand.mode = lhs.mode
-				found        = true
-				break
+		if lhs.type.kind == .Struct {
+			for field in lhs.type.variant.(^types.Struct).fields {
+				if field.name.text == v.selector.text {
+					operand.type = field.type
+					operand.mode = lhs.mode
+					return
+				}
 			}
 		}
-		if !found {
-			error(checker, v, "expression of type %v has no field called '%s'", lhs.type, v.selector.text)
-		}
+		error(checker, v, "expression of type %v has no field called '%s'", lhs.type, v.selector.text)
 
 	case ^ast.Expr_Call:
 		fn := check_expr_internal(checker, v.lhs, {})

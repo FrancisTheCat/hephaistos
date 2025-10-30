@@ -53,7 +53,7 @@ fragment_main :: proc(
     	}
     }
 
-    e: #import(Some_Enum) = .C
+    e := #import(Some_Enum).A
     switch e {
 	case .A:
 	case .B:
