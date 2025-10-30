@@ -1,12 +1,14 @@
-package hephaistos
+package example
 
 import "core:slice"
 import "core:strings"
-import "core:os"
 import "core:mem"
 import "core:fmt"
+import "core:os"
 import "core:prof/spall"
 import glm "core:math/linalg/glsl"
+
+import hep ".."
 
 ENABLE_SPALL :: #config(ENABLE_SPALL, false)
 
@@ -61,16 +63,15 @@ main :: proc() {
 		A, B, C,
 	}
 
-	defines: map[string]Const_Value
+	defines: map[string]hep.Const_Value
 	defines["SOME_CONFIG_VAR"] = true
 	defer delete(defines)
 
-	file_name := "example.hep"
-	source    := string(os.read_entire_file(file_name) or_else panic(""))
-	defer delete(source)
-	code, errors := compile_shader(
+	FILE_NAME :: "example.hep"
+	source    := #load(FILE_NAME, string)
+	code, errors := hep.compile_shader(
 		source,
-		file_name,
+		FILE_NAME,
 		defines         = defines,
 		shared_types    = { Vertex_Shader_Uniforms, Shadow_Uniforms, Some_Enum, },
 		error_allocator = context.temp_allocator,
@@ -80,7 +81,7 @@ main :: proc() {
 	if len(errors) != 0 {
 		lines := strings.split_lines(source, context.temp_allocator)
 		for error in errors {
-			print_error(os.stream_from_handle(os.stderr), file_name, lines, error)
+			hep.print_error(os.stream_from_handle(os.stderr), FILE_NAME, lines, error)
 		}
 		return
 	}
