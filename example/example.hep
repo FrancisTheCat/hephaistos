@@ -67,3 +67,12 @@ fragment_main :: proc(
 	f_color   = lighting * f32(1 - shadow) * texture[v_tex_coords]
 	return
 }
+
+@(fragment_shader)
+shadow_main :: proc(
+	v_position:   [3]f32 @ 0,
+	v_normal:     [3]f32 @ 1,
+	v_tex_coords: [2]f32 @ 2,
+) {
+	
+}

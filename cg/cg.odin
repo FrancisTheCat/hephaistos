@@ -58,7 +58,7 @@ CG_Context :: struct {
 	meta:               spv.Builder,
 	memory_model:       spv.Builder,
 	entry_points:       spv.Builder,
-	exectution_modes:   spv.Builder,
+	execution_modes:    spv.Builder,
 	debug_a:            spv.Builder,
 	debug_b:            spv.Builder,
 	annotations:        spv.Builder,
@@ -355,7 +355,7 @@ generate :: proc(
 		ctx.meta.data[:],
 		ctx.memory_model.data[:],
 		ctx.entry_points.data[:],
-		ctx.exectution_modes.data[:],
+		ctx.execution_modes.data[:],
 		ctx.debug_a.data[:],
 		ctx.debug_b.data[:],
 		ctx.annotations.data[:],
@@ -716,7 +716,7 @@ cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
 		}
 		spv.OpEntryPoint(&ctx.entry_points, execution_mode, id, name, ..interface[:])
 		if p.shader_stage == .Fragment {
-			spv.OpExecutionMode(&ctx.entry_points, id, .OriginUpperLeft)
+			spv.OpExecutionMode(&ctx.execution_modes, id, .OriginUpperLeft)
 		}
 	}
 
