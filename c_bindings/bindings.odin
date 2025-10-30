@@ -37,7 +37,7 @@ hep_compile_shader :: proc "c" (
 }
 
 @(export)
-hep_result_free :: proc "c" (r: Result) {
+hep_result_free :: proc "c" (#by_ptr r: Result) {
 	context = runtime.default_context()
 	if len(r.errors) != 0 {
 		mem.dynamic_arena_destroy(r._error_arena)

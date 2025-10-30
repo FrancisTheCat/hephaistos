@@ -25,4 +25,4 @@ typedef struct {
 } Hep_Result;
 
 Hep_Result hep_compile_shader(char const *source, char const *path);
-void       hep_result_free(Hep_Result);
+void       hep_result_free(Hep_Result const *);
