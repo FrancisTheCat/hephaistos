@@ -1565,16 +1565,76 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				unimplemented()
 			case .Transpose:
 				unimplemented()
-			case .Pow:
-				unimplemented()
 			case .Sqrt:
-				unimplemented()
+				if len(v.args) != 1 {
+					error(checker, v, "builtin 'sqrt' expects one argument, got %d", len(args))
+					break
+				}
+				arg  := args[0]
+				type := types.op_result_type(arg.type, types.t_f32, false, {})
+				if type.kind == .Invalid {
+					error(checker, v, "builtin 'sqrt' expects one argument of type float or vector, got %v", arg.type)
+					return
+				}
+				operand.mode = .RValue
+				operand.type = type
 			case .Sin:
-				unimplemented()
+				if len(v.args) != 1 {
+					error(checker, v, "builtin 'sin' expects one argument, got %d", len(args))
+					break
+				}
+				arg  := args[0]
+				type := types.op_result_type(arg.type, types.t_f32, false, {})
+				if type.kind == .Invalid {
+					error(checker, v, "builtin 'sin' expects one argument of type float or vector, got %v", arg.type)
+					return
+				}
+				operand.mode = .RValue
+				operand.type = type
 			case .Cos:
-				unimplemented()
+				if len(v.args) != 1 {
+					error(checker, v, "builtin 'cos' expects one argument, got %d", len(args))
+					break
+				}
+				arg  := args[0]
+				type := types.op_result_type(arg.type, types.t_f32, false, {})
+				if type.kind == .Invalid {
+					error(checker, v, "builtin 'cos' expects one argument of type float or vector, got %v", arg.type)
+					return
+				}
+				operand.mode = .RValue
+				operand.type = type
 			case .Tan:
-				unimplemented()
+				if len(v.args) != 1 {
+					error(checker, v, "builtin 'tan' expects one argument, got %d", len(args))
+					break
+				}
+				arg  := args[0]
+				type := types.op_result_type(arg.type, types.t_f32, false, {})
+				if type.kind == .Invalid {
+					error(checker, v, "builtin 'tan' expects one argument of type float or vector, got %v", arg.type)
+					return
+				}
+				operand.mode = .RValue
+				operand.type = type
+			case .Pow:
+				if len(v.args) != 2 {
+					error(checker, v, "builtin 'pow' expects two argument, got %d", len(args))
+					break
+				}
+				x         := args[0]
+				y         := args[1]
+				type      := types.op_result_type(x.type, y.type, false, {})
+				elem_type := type
+				if types.is_vector(type) {
+					elem_type = type.variant.(^types.Vector).elem
+				}
+				if type.kind == .Invalid || !types.is_float(elem_type) {
+					error(checker, v, "builtin 'tan' expects two float vectors or scalars, got %v and %v", x.type, y.type)
+					return
+				}
+				operand.mode = .RValue
+				operand.type = type
 			}
 			
 		case .Type:

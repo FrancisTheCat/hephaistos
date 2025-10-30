@@ -1207,10 +1207,10 @@ _cg_expr :: proc(
 	case ^ast.Expr_Call:
 		switch {
 		case v.builtin != nil:
+			ti := cg_type(ctx, v.type)
 			#partial switch v.builtin {
 			case .Dot:
 				t  := types.op_result_type(v.args[0].value.type, v.args[1].value.type, false, {})
-				ti := cg_type(ctx, v.type)
 				a  := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), t)
 				b  := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), t)
 				id: spv.Id
@@ -1226,7 +1226,6 @@ _cg_expr :: proc(
 				}
 				return { id = id, }
 			case .Cross:
-				ti  := cg_type(ctx, v.type)
 				a   := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
 				b   := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), v.type)
 				e   := v.type.variant.(^types.Vector).elem
@@ -1254,7 +1253,6 @@ _cg_expr :: proc(
 				}
 				return { id = id, }
 			case .Min, .Max:
-				ti := cg_type(ctx, v.type)
 				f: type_of(spv_glsl.OpFMin)
 				elem_type := v.type
 				if v.type.kind == .Vector {
@@ -1277,6 +1275,18 @@ _cg_expr :: proc(
 				}
 
 				return { id = running, }
+			case .Sqrt:
+				return { id = spv_glsl.OpSqrt(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Sin:
+				return { id = spv_glsl.OpSin(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Cos:
+				return { id = spv_glsl.OpCos(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Tan:
+				return { id = spv_glsl.OpTan(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Pow:
+				x := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
+				y := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), v.type)
+				return { id = spv_glsl.OpPow(builder, ti.type, x, y), }
 			case:
 				unimplemented()
 			}
