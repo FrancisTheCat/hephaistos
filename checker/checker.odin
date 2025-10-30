@@ -455,6 +455,11 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				if a.value != nil {
 					error(checker, a.value, "'push_constant' attribute does not accept a value")
 				}
+			case "readonly":
+				v.readonly = true
+				if a.value != nil {
+					error(checker, a.value, "'readonly' attribute does not accept a value")
+				}
 			case "binding":
 				if a.value == nil {
 					error(checker, a.ident, "'binding' attribute requires a value")
@@ -487,6 +492,30 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					v.link_name = val
 				} else {
 					error(checker, value, "'descriptor_set' attribute value must be a constant string")
+				}
+			case "local_size":
+				if a.value == nil {
+					error(checker, a.ident, "'link_name' attribute requires a value")
+					break
+				}
+				if comp, ok := a.value.derived_expr.(^ast.Expr_Compound); ok {
+					if len(comp.fields) != 3 {
+						error(checker, a.value, "'local_size' attribute value must be a compount literal of three constant integers")
+						break
+					}
+					for field, i in comp.fields {
+						value := check_expr(checker, field.value)
+						if x, ok := value.value.(i64); ok {
+							if x <= 0 {
+								error(checker, field.value, "'local_size' values must be positive integers, got %v", x)
+							}
+							v.local_size[i] = i32(x)
+						} else {
+							error(checker, field.value, "'local_size' values must be constant integers, got %v", value.type)
+						}
+					}
+				} else {
+					error(checker, a.value, "'local_size' attribute value must be a compount literal of three constant integers")
 				}
 			case:
 				found: bool
@@ -612,176 +641,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 	return
 }
 
-check_const_decl :: proc(checker: ^Checker, v: ^ast.Decl_Value) {
-	if v.mutable {
-		return
-	}
-
-	names  := make([]tokenizer.Token, len(v.lhs))
-	values := make([]Operand,         len(v.values))
-
-	seen := make(map[string]struct{})
-	for a in v.attributes {
-		if a.ident.text in seen {
-			error(checker, a.ident, "duplicate attribute: '%v'", a.ident.text)
-		}
-		seen[a.ident.text] = {}
-
-		switch a.ident.text {
-		case "uniform":
-			if !v.mutable {
-				error(checker, a.ident, "'uniform' attribute can not be applied to a constant")
-			}
-		case "push_constant":
-			if !v.mutable {
-				error(checker, a.ident, "'push_constant' attribute can not be applied to a constant")
-			}
-		case "binding":
-			if !v.mutable {
-				error(checker, a.ident, "'binding' attribute can not be applied to a constant")
-			}
-		case "descriptor_set":
-			if !v.mutable {
-				error(checker, a.ident, "'descriptor_set' attribute can not be applied to a constant")
-			}
-		case "link_name":
-			if a.value == nil {
-				error(checker, a.ident, "'link_name' attribute requires a value")
-				break
-			}
-			value := check_expr(checker, a.value)
-			if val, ok := value.value.(string); ok {
-				v.link_name = val
-			} else {
-				error(checker, value, "'descriptor_set' attribute value must be a constant string")
-			}
-		case:
-			found: bool
-			for name in ast.shader_stage_names {
-				if name == a.ident.text {
-					found = true
-					break
-				}
-			}
-			if !found {
-				error(checker, a.ident, "unknown attribute '%s' in value declaration", a.ident.text)
-			}
-		}
-	}
-
-	for &name, i in names {
-		if ident, ok := v.lhs[i].derived_expr.(^ast.Expr_Ident); ok {
-			name = ident.ident
-		} else {
-			error(checker, v.lhs[i], "left hand side of declaration must be an identifier")
-		}
-	}
-	for &values, i in values {
-		values = check_expr_or_type(checker, v.values[i], v.attributes)
-	}
-
-	v.types = make([]^types.Type, len(v.lhs))
-
-	if len(values) == 0 {
-		type := check_type(checker, v.type_expr)
-		for name in names {
-			entity_kind := Entity_Kind.Var
-			scope_insert_entity(checker, entity_new(entity_kind, name, type, decl = v, allocator = checker.allocator))
-		}
-		for &t in v.types {
-			t = type
-		}
-		return
-	}
-
-	explicit_type: ^types.Type
-	if v.type_expr != nil {
-		explicit_type = check_type(checker, v.type_expr)
-	}
-
-	name_i := 0
-	check_decl_types: for &r in values {
-		if r.type.kind == .Tuple {
-			for field in r.type.variant.(^types.Struct).fields {
-				if name_i >= len(names) {
-					name_i += 1
-					continue
-				}
-				name        := names[name_i]
-				entity_kind := Entity_Kind.Var
-				if !v.mutable {
-					entity_kind = .Const
-					if r.mode == .Type {
-						entity_kind = .Type
-					}
-				}
-
-				type := explicit_type
-				if type == nil {
-					type = field.type
-					if entity_kind != .Const {
-						type = types.default_type(type)
-					}
-				} else {
-					if !types.implicitly_castable(field.type, explicit_type) {
-						error(checker, v, "mismatched types in value declaration: %v vs %v", explicit_type, field.type)
-					}
-				}
-				v.types[name_i] = type
-
-				scope_insert_entity(checker, entity_new(entity_kind, name, type, decl = v, allocator = checker.allocator))
-				name_i += 1
-			}
-		} else {
-			if name_i >= len(names) {
-				name_i += 1
-				continue
-			}
-			name        := names[name_i]
-			entity_kind := Entity_Kind.Var
-			if !v.mutable {
-				entity_kind = .Const
-				if r.mode == .Type {
-					entity_kind = .Type
-				}
-			}
-
-			type := explicit_type
-			if type == nil {
-				type = r.type
-				if entity_kind != .Const {
-					type = types.default_type(type)
-				}
-			} else {
-				if !types.implicitly_castable(r.type, explicit_type) {
-					error(checker, v, "mismatched types in value declaration: %v vs %v", explicit_type, r.type)
-				}
-			}
-			v.types[name_i] = type
-
-			scope_insert_entity(checker, entity_new(entity_kind, name, type, decl = v, allocator = checker.allocator))
-			name_i += 1
-		}
-	}
-	if name_i != len(names) {
-		error(checker, v, "assignment count mismatch: %v vs %v", len(names), name_i)
-	}
-}
-
-check_const_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) {
-	decl, ok := stmt.derived_stmt.(^ast.Decl_Value)
-	if !ok || decl.mutable {
-		return
-	}
-
-	check_const_decl(checker, decl)
-}
-
 check_stmt_list :: proc(checker: ^Checker, stmts: []^ast.Stmt) -> (diverging: bool) {
-	// for stmt in stmts {
-	// 	check_const_stmt(checker, stmt)
-	// }
-
 	for stmt, i in stmts {
 		d := check_stmt(checker, stmt)
 		if d && !diverging && i != len(stmts) - 1 {
@@ -1834,6 +1694,11 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
 			result_type = lhs.type.variant.(^types.Vector).elem
+		case .Buffer:
+			if !types.is_integer(rhs.type) {
+				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
+			}
+			result_type = lhs.type.variant.(^types.Buffer).elem
 		case .Sampler:
 			sampler := lhs.type.variant.(^types.Sampler)
 			if sampler.dimensions == 1 {
@@ -1842,7 +1707,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 						checker,
 						rhs,
 						"expected a scalar to sample texture of type %v, got: %v",
-						(^types.Type)(sampler),
+						sampler,
 						rhs.type,
 					)
 				}
@@ -1853,7 +1718,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 						rhs,
 						"expected a %d dimensional vector to sample texture of type %v, got: %v",
 						sampler.dimensions,
-						(^types.Type)(sampler),
+						sampler,
 						rhs.type,
 					)
 				}
@@ -1935,16 +1800,26 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		operand.type = types.matrix_new(col_type, cols, checker.allocator)
 		operand.mode = .Type
 	case ^ast.Type_Array:
-		count := check_expr(checker, v.count)
-		if c, ok := count.value.(i64); ok {
-			if c < 2 || c > 4 {
-				error(checker, count, "vector size has to be between 2 and 4, got %d", c)
+		elem := types.default_type(check_type(checker, v.elem))
+		if v.count == nil {
+			if elem.size == 0 {
+				error(checker, v.elem, "buffer element type must have a non-zero size, got %v", elem)
 				return
 			}
-			operand.type = types.vector_new(types.default_type(check_type(checker, v.elem)), int(c), checker.allocator)
+			operand.type = types.buffer_new(elem, checker.allocator)
 			operand.mode = .Type
 		} else {
-			error(checker, count, "expected a constant integer as the count of an array")
+			count := check_expr(checker, v.count)
+			if c, ok := count.value.(i64); ok {
+				if c < 2 || c > 4 {
+					error(checker, count, "vector size has to be between 2 and 4, got %d", c)
+					return
+				}
+				operand.type = types.vector_new(elem, int(c), checker.allocator)
+				operand.mode = .Type
+			} else {
+				error(checker, count, "expected a constant integer as the count of an array")
+			}
 		}
 
 	case ^ast.Type_Struct:
@@ -2042,6 +1917,8 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		type, ok := checker.shared_types[v.ident.text]
 		if !ok {
 			error(checker, v.ident, "unknown shared type: %s", v.ident.text)
+			operand.mode = .Type
+			operand.type = types.t_invalid
 			return
 		}
 		operand.type = type

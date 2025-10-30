@@ -63,6 +63,12 @@ main :: proc() {
 		A, B, C,
 	}
 
+	Particle :: struct {
+		position: [4]f32,
+		velocity: [4]f32,
+		color:    [4]f32,
+	}
+
 	defines: map[string]hep.Const_Value
 	defines["SOME_CONFIG_VAR"] = true
 	defer delete(defines)
@@ -73,7 +79,7 @@ main :: proc() {
 		source,
 		FILE_NAME,
 		defines         = defines,
-		shared_types    = { Vertex_Shader_Uniforms, Shadow_Uniforms, Some_Enum, },
+		shared_types    = { Vertex_Shader_Uniforms, Shadow_Uniforms, Some_Enum, Particle, },
 		error_allocator = context.temp_allocator,
 	)
 	defer delete(code)

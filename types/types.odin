@@ -39,6 +39,11 @@ Vector :: struct {
 	elem:       ^Type,
 }
 
+Buffer :: struct {
+	using base: Type,
+	elem:       ^Type,
+}
+
 Matrix :: struct {
 	using base: Type,
 	cols:       int,
@@ -75,6 +80,7 @@ Kind :: enum {
 	Struct,
 	Matrix,
 	Vector,
+	Buffer,
 	Proc,
 	Sampler,
 	Enum,
@@ -90,6 +96,7 @@ Type :: struct {
 		^Struct,
 		^Matrix,
 		^Vector,
+		^Buffer,
 		^Proc,
 		^Sampler,
 		^Enum,
@@ -134,7 +141,7 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 		fmt.wprint(w, "invalid type")
 	case .Struct:
 		s := type.variant.(^Struct)
-		fmt.wprint(w, "struct {")
+		fmt.wprint(w, "struct{")
 		for field, i in s.fields {
 			if i > 0 {
 				fmt.wprint(w, ", ")
@@ -146,7 +153,7 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 		fmt.wprint(w, "}")
 	case .Enum:
 		e := type.variant.(^Enum)
-		fmt.wprint(w, "enum {")
+		fmt.wprint(w, "enum{")
 		for field, i in e.values {
 			if i > 0 {
 				fmt.wprint(w, ", ")
@@ -164,6 +171,10 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 	case .Vector:
 		v := type.variant.(^Vector)
 		fmt.wprintf(w, "vector[%d]", v.count)
+		print_writer(w, v.elem)
+	case .Buffer:
+		v := type.variant.(^Buffer)
+		fmt.wprintf(w, "buffer[]")
 		print_writer(w, v.elem)
 	case .Proc:
 		b := type.variant.(^Proc)
@@ -285,7 +296,35 @@ equal :: proc(a, b: ^Type) -> bool {
 
 		return equal(a.elem, b.elem)
 	case .Proc:
-		unimplemented()
+		a := a.variant.(^Proc)
+		b := b.variant.(^Proc)
+		if len(a.args) != len(b.args) {
+			return false
+		}
+		if len(a.returns) != len(b.returns) {
+			return false
+		}
+
+		for i in 0 ..< len(a.args) {
+			if a.args[i].location != b.args[i].location {
+				return false
+			}
+			if !equal(a.args[i].type, b.args[i].type) {
+				return false
+			}
+		}
+
+		for i in 0 ..< len(a.returns) {
+			if a.returns[i].location != b.returns[i].location {
+				return false
+			}
+			if !equal(a.returns[i].type, b.returns[i].type) {
+				return false
+			}
+		}
+
+		return true
+
 	case .Sampler:
 		a := a.variant.(^Sampler)
 		b := b.variant.(^Sampler)
@@ -421,6 +460,11 @@ is_vector :: proc(type: ^Type) -> bool {
 }
 
 @(require_results)
+is_buffer :: proc(type: ^Type) -> bool {
+	return type.kind == .Buffer
+}
+
+@(require_results)
 is_matrix :: proc(type: ^Type) -> bool {
 	return type.kind == .Matrix
 }
@@ -501,6 +545,8 @@ type_hash :: proc(type: ^Type, seed: u64 = 0xcbf29ce484222325) -> u64 {
 		for &val in v.values {
 			h = hash.fnv64a(to_bytes(&val.value), h)
 		}
+	case ^Buffer:
+		h = type_hash(v.elem, h)
 	}
 	
 	return h
@@ -592,6 +638,17 @@ vector_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Vector
 	type.count = count
 	type.size  = count * elem.size
 	type.align = elem.align
+
+	return type
+}
+
+@(require_results)
+buffer_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Buffer {
+	assert(elem      != nil)
+	assert(elem.size != 0)
+
+	type := new(.Buffer, Buffer, allocator)
+	type.elem  = elem
 
 	return type
 }

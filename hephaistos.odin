@@ -4,6 +4,7 @@ import "base:runtime"
 
 import "core:io"
 import "core:fmt"
+import "core:reflect"
 import "core:terminal/ansi"
 
 import "tokenizer"
@@ -121,7 +122,8 @@ when !HEPHAISTOS_NO_TYPE_FORMATTER {
 		context = runtime.default_context()
 
 		formatter :: proc(fi: ^fmt.Info, arg: any, verb: rune) -> bool {
-			types.print_writer(fi.writer, arg.(^Type))
+			#no_type_assert t := arg.(^Type)
+			types.print_writer(fi.writer, t)
 			return true
 		}
 
@@ -133,6 +135,12 @@ when !HEPHAISTOS_NO_TYPE_FORMATTER {
 			assert(err == .None)
 		case .Formatter_Previously_Found, .None:
 			// don't care
+		}
+
+		ti := reflect.type_info_base(type_info_of(type_of(Type{}.variant)))
+		for v in ti.variant.(reflect.Type_Info_Union).variants {
+			err := fmt.register_user_formatter(v.id, formatter)
+			assert(err == .None)
 		}
 	}
 

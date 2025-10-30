@@ -339,7 +339,10 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 		fallthrough
 	case .Open_Bracket:
 		token_expect(parser, .Open_Bracket) or_return
-		count := parse_expr(parser) or_return
+		count: ^ast.Expr
+		if token_peek(parser).kind != .Close_Bracket {
+			count = parse_expr(parser) or_return
+		}
 		token_expect(parser, .Close_Bracket) or_return
 		elem := parse_expr(parser, allow_compound_literals = false) or_return
 

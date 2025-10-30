@@ -12,8 +12,7 @@ import "../checker"
 import spv      "../spirv-odin"
 import spv_glsl "../spirv-odin/spirv_glsl"
 
-VOID      :: 1
-VOID_PROC :: 2 // proc() -> ()
+VOID, VOID_PROC: spv.Id
 
 CG_Storage_Class :: enum {
 	Global = 1,
@@ -23,20 +22,23 @@ CG_Storage_Class :: enum {
 	Output,
 	Push_Constant,
 	Uniform_Constant,
+	Storage_Buffer,
 }
 
 CG_Type_Info :: struct {
 	type:       spv.Id,
 	nil_value:  spv.Id,
 	image_type: spv.Id,
+	array_type: spv.Id,
+	array_ptr:  spv.Id,
 	ptr_types:  [CG_Storage_Class]spv.Id,
 }
 
 Type_Hash_Entry :: struct {
-	hash:            u64,
-	type:           ^types.Type,
-	info:           ^CG_Type_Info,
-	explicit_layout: bool,
+	hash:  u64,
+	type:  ^types.Type,
+	info:  ^CG_Type_Info,
+	flags: CG_Type_Flags,
 }
 
 Type_Registry :: [][dynamic]Type_Hash_Entry
@@ -76,6 +78,8 @@ CG_Context :: struct {
 	link_name:          string,
 	shader_stage:       ast.Shader_Stage,
 	debug_file_id:      spv.Id,
+
+	local_size:         [3]i32,
 }
 
 CG_Entity :: struct {
@@ -151,29 +155,29 @@ cg_scope :: proc(
 	return
 }
 
-register_type :: proc(registry: ^Type_Registry, t: ^types.Type, explicit_layout: bool) -> (type_info: ^CG_Type_Info, ok: bool) {
+register_type :: proc(registry: ^Type_Registry, t: ^types.Type, flags: CG_Type_Flags) -> (type_info: ^CG_Type_Info, ok: bool) {
 	hash := types.type_hash(t)
-	if explicit_layout && t.kind == .Struct {
-		hash = ~hash
-	}
+	// if flags && t.kind == .Struct {
+	// 	hash = ~hash
+	// }
 	if hash == 0 {
 		hash = 1
 	}
 	entry := &registry[hash % u64(len(registry))]
 	for &e in entry {
-		if e.type == t && (t.kind != .Struct || e.explicit_layout == explicit_layout) {
+		if e.type == t && (t.kind != .Struct || e.flags == flags) {
 			return e.info, true
 		}
 	}
 	for &e in entry {
-		if (t.kind != .Struct || e.explicit_layout == explicit_layout) && e.hash == hash && types.equal(t, e.type) {
+		if (t.kind != .Struct || e.flags == flags) && e.hash == hash && types.equal(t, e.type) {
 			return e.info, true
 		}
 	}
 	append(entry, Type_Hash_Entry {
-		hash            = hash,
-		type            = t,
-		explicit_layout = explicit_layout,
+		hash  = hash,
+		type  = t,
+		flags = flags,
 	})
 
 	type_info                  = new(CG_Type_Info)
@@ -196,7 +200,8 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 	decl_builder      := &ctx.functions
 	storage_class     := CG_Storage_Class.Function
 	spv_storage_class := spv.StorageClass.Function
-	explicit_layout   := false
+	flags: CG_Type_Flags
+	// explicit_layout   := false
 
 	if global {
 		value_builder     = nil
@@ -212,7 +217,8 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 			decl_builder      = &ctx.globals
 			storage_class     = .Uniform
 			spv_storage_class = .Uniform
-			explicit_layout   = true
+			flags             = { .Block, .Explicit_Layout, }
+			// explicit_layout   = true
 		}
 
 		if v.push_constant {
@@ -220,7 +226,8 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 			decl_builder      = &ctx.globals
 			storage_class     = .Push_Constant
 			spv_storage_class = .PushConstant
-			explicit_layout   = true
+			flags             = { .Block, .Explicit_Layout, }
+			// explicit_layout   = true
 		}
 
 		prev_link_name := ctx.link_name
@@ -231,27 +238,39 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 			ctx.link_name = prev_link_name
 		}
 
+		if v.local_size != 0 {
+			ctx.local_size = v.local_size
+		}
+
 		if v.mutable {
 			if len(v.values) == 0 {
 				for type, i in v.types {
 					storage_class     := storage_class
 					spv_storage_class := spv_storage_class
 
-					type_info := cg_type(ctx, type, explicit_layout)
-					init: Maybe(spv.Id)
-					if !v.uniform && !v.push_constant && !types.is_sampler(type) {
-						init = cg_nil_value(ctx, type_info)
-					}
 					if types.is_sampler(type) {
 						assert(global)
 						storage_class     = .Uniform_Constant
 						spv_storage_class = .UniformConstant
 					}
+					if types.is_buffer(type) {
+						assert(global)
+						storage_class     = .Storage_Buffer
+						spv_storage_class = .StorageBuffer
+						flags             = { .Block, .Explicit_Layout, }
+						// explicit_layout   = true
+					}
+
+					type_info := cg_type(ctx, type, flags)
+					init: Maybe(spv.Id)
+					if !v.uniform && !v.push_constant && !types.is_sampler(type) && !types.is_buffer(type) {
+						init = cg_nil_value(ctx, type_info)
+					}
 					id   := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
 					name := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
 					cg_insert_entity(ctx, name, storage_class, type, id)
 
-					if v.uniform || types.is_sampler(type) {
+					if v.uniform || types.is_sampler(type) || types.is_buffer(type) {
 						spv.OpDecorate(&ctx.annotations, id, .Binding,       u32(v.binding))
 						spv.OpDecorate(&ctx.annotations, id, .DescriptorSet, u32(v.descriptor_set))
 					}
@@ -259,7 +278,7 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 			} else {
 				for value, i in v.values {
 					type      := v.types[i]
-					type_info := cg_type(ctx, type, explicit_layout)
+					type_info := cg_type(ctx, type, flags)
 					init: spv.Id
 					if global {
 						init = cg_expr(ctx, nil, value).id
@@ -329,13 +348,12 @@ generate :: proc(
 	append(&ctx.meta.data, 0)
 	cg_scope_push(&ctx)
 
-	void := spv.OpTypeVoid(&ctx.types)
-	assert(void == VOID)
-	void_proc := spv.OpTypeFunction(&ctx.types, void)
-	assert(void_proc == VOID_PROC)
-
-	spv.OpName(&ctx.debug_b, void,      "$VOID")
-	spv.OpName(&ctx.debug_b, void_proc, "$VOID_PROC")
+	VOID                       = spv.OpTypeVoid(&ctx.types)
+	void_proc_type            := types.new(.Proc, types.Proc, context.temp_allocator)
+	void_proc_type.return_type = types.new(.Tuple, types.Struct, context.temp_allocator)
+	VOID_PROC                  = cg_type(&ctx, void_proc_type).type
+	spv.OpName(&ctx.debug_b, VOID,      "$VOID")
+	spv.OpName(&ctx.debug_b, VOID_PROC, "$VOID_PROC")
 
 	if file_name, ok := file_name.?; ok {
 		file := cg_string(&ctx, file_name)
@@ -344,6 +362,7 @@ generate :: proc(
 	}
 
 	spv.OpCapability(&ctx.meta, .Shader)
+	ctx.capabilities[.Shader] = {}
 
 	spv_glsl.extension_id = spv.OpExtInstImport(&ctx.memory_model, "GLSL.std.450")
 	spv.OpMemoryModel(&ctx.memory_model, .Logical, .Simple)
@@ -458,6 +477,8 @@ cg_type_ptr_from_type :: proc(ctx: ^CG_Context, type_info: ^CG_Type_Info, storag
 			spv_storage_class = .PushConstant
 		case .Uniform_Constant:
 			spv_storage_class = .UniformConstant
+		case .Storage_Buffer:
+			spv_storage_class = .StorageBuffer
 		}
 		type_info.ptr_types[storage_class] = spv.OpTypePointer(&ctx.types, spv_storage_class, type_info.type)
 	}
@@ -469,13 +490,21 @@ cg_type_ptr_from_type_info :: proc(ctx: ^CG_Context, type: ^types.Type, storage_
 	return cg_type_ptr_from_type(ctx, cg_type(ctx, type), storage_class)
 }
 
+CG_Type_Flag :: enum {
+	Block,
+	Explicit_Layout,
+}
+
+CG_Type_Flags :: bit_set[CG_Type_Flag]
+
 @(require_results)
-cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, explicit_layout := false) -> ^CG_Type_Info {
+cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) -> ^CG_Type_Info {
 	assert(type != nil)
+	assert(.Block not_in flags || .Explicit_Layout in flags)
 	type := types.base_type(type)
 
 	registry := &ctx.type_registry
-	info, ok := register_type(registry, type, explicit_layout)
+	info, ok := register_type(registry, type, flags)
 	if ok {
 		assert(info.type != 0)
 		return info
@@ -532,14 +561,14 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, explicit_layout := false) -
 		if len(type.fields) != 0 {
 			fields := make([]spv.Id, len(type.fields))
 			for &f, i in fields {
-				f = cg_type(ctx, type.fields[i].type, explicit_layout).type
+				f = cg_type(ctx, type.fields[i].type, flags - { .Block, }).type
 			}
 			info.type = spv.OpTypeStruct(&ctx.types, ..fields)
 			for f, i in type.fields {
 				i := u32(i)
 				spv.OpMemberName(&ctx.debug_b, info.type, i, f.name.text)
 
-				if !explicit_layout {
+				if .Explicit_Layout not_in flags {
 					continue
 				}
 				spv.OpMemberDecorate(&ctx.annotations, info.type, u32(i), .Offset, u32(f.offset))
@@ -547,7 +576,7 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, explicit_layout := false) -
 				spv.OpMemberDecorate(&ctx.annotations, info.type, i, .MatrixStride, u32(type_matrix.col_type.size))
 				spv.OpMemberDecorate(&ctx.annotations, info.type, i, .ColMajor)
 			}
-			if explicit_layout {
+			if .Block in flags {
 				spv.OpDecorate(&ctx.annotations, info.type, .Block)
 			}
 		} else {
@@ -596,6 +625,17 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, explicit_layout := false) -
 		info.image_type = spv.OpTypeImage(&ctx.types, cg_type(ctx, sampled_type).type, spv.Dim(type.dimensions - 1), 0, 0, 0, 1, .Unknown)
 		info.type       = spv.OpTypeSampledImage(&ctx.types, info.image_type)
 		ctx.image_types[image_type] = { info.image_type, info.type, }
+	case .Buffer:
+		type := type.variant.(^types.Buffer)
+		elem := cg_type(ctx, type.elem, { .Explicit_Layout, })
+		info.array_type = spv.OpTypeRuntimeArray(&ctx.types, elem.type)
+		info.type       = spv.OpTypeStruct(&ctx.types, info.array_type)
+		info.array_ptr  = spv.OpTypePointer(&ctx.types, .StorageBuffer, info.array_type)
+		spv.OpDecorate(&ctx.annotations, info.array_type, .ArrayStride, u32(type.elem.size))
+		if .Block in flags {
+			spv.OpDecorate(&ctx.annotations, info.type, .Block)
+			spv.OpMemberDecorate(&ctx.annotations, info.type, 0, .Offset, 0)
+		}
 	}
 
 	return info
@@ -703,7 +743,7 @@ cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
 		case .Tesselation:
 			execution_mode = .TessellationControl
 		case .Compute:
-			execution_mode = .Kernel
+			execution_mode = .GLCompute
 		}
 		interface := make([dynamic]spv.Id, 0, len(ctx.referenced_globals))
 		for g in ctx.referenced_globals {
@@ -715,8 +755,12 @@ cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
 			name = ctx.link_name
 		}
 		spv.OpEntryPoint(&ctx.entry_points, execution_mode, id, name, ..interface[:])
-		if p.shader_stage == .Fragment {
+		#partial switch p.shader_stage {
+		case .Fragment:
 			spv.OpExecutionMode(&ctx.execution_modes, id, .OriginUpperLeft)
+		case .Compute:
+			spv.OpExecutionMode(&ctx.execution_modes, id, .LocalSize, u32(ctx.local_size.x), u32(ctx.local_size.y), u32(ctx.local_size.z))
+			// spv.OpExecutionMode(&ctx.execution_modes, id, .OriginUpperLeft)
 		}
 	}
 
@@ -1133,7 +1177,7 @@ _cg_expr :: proc(
 	case ^ast.Expr_Ident:
 		value = cg_lookup_entity(ctx, v.ident.text).value
 		#partial switch value.storage_class {
-		case .Uniform, .Global, .Push_Constant, .Output, .Uniform_Constant:
+		case .Uniform, .Global, .Push_Constant, .Output, .Uniform_Constant, .Storage_Buffer:
 			ctx.referenced_globals[value.id] = {}
 		}
 		return
@@ -1396,7 +1440,13 @@ _cg_expr :: proc(
 					return { id = texel, }
 				}
 			}
-			id := spv.OpAccessChain(builder, cg_type_ptr(ctx, v.type, lhs.storage_class), lhs.id, rhs.id)
+			if types.is_buffer(lhs.type) {
+				buffer := lhs.type.variant.(^types.Buffer)
+				elem   := cg_type(ctx, buffer.elem, { .Explicit_Layout, })
+				id     := spv.OpAccessChain(builder, cg_type_ptr(ctx, elem, .Storage_Buffer), lhs.id, cg_constant(ctx, 0).id, rhs.id)
+				return { id = id, storage_class = .Storage_Buffer, type = buffer.elem, }
+			}
+			id    := spv.OpAccessChain(builder, cg_type_ptr(ctx, v.type, lhs.storage_class), lhs.id, rhs.id)
 			value := CG_Value { id = id, storage_class = lhs.storage_class, }
 			return value
 		}

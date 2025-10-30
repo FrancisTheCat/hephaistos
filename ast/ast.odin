@@ -197,9 +197,11 @@ Decl_Value :: struct {
 	types:          []^types.Type,
 	uniform:        bool,
 	push_constant:  bool,
+	readonly:       bool,
 	binding:        int,
 	descriptor_set: int,
 	link_name:      string,
+	local_size:     [3]i32,
 }
 
 Stmt_Return :: struct {
