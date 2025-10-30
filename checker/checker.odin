@@ -1,4 +1,4 @@
-package hephaistos
+package hephaistos_checker
 
 import "base:intrinsics"
 import "base:runtime"
@@ -7,10 +7,10 @@ import "core:fmt"
 import "core:mem"
 import "core:reflect"
 
-import "ast"
-import "tokenizer"
-import "types"
-import spv "spirv-odin"
+import "../ast"
+import "../tokenizer"
+import "../types"
+import spv "../spirv-odin"
 
 Checker :: struct {
 	scope:           ^Scope,
@@ -2052,6 +2052,4 @@ error :: proc {
 	error_checker_token,
 	error_checker_ast_node,
 	error_checker_start_end,
-	error_parser_start_end,
-	error_parser_single_token,
 }

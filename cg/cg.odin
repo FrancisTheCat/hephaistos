@@ -1,15 +1,16 @@
-package hephaistos
+package hephaistos_cg
 
 import "core:fmt"
 import "core:reflect"
 import "core:slice"
 
-import "ast"
-import "types"
-import "tokenizer"
+import "../ast"
+import "../types"
+import "../tokenizer"
+import "../checker"
 
-import spv "spirv-odin"
-import spv_glsl "spirv-odin/spirv_glsl"
+import spv      "../spirv-odin"
+import spv_glsl "../spirv-odin/spirv_glsl"
 
 VOID      :: 1
 VOID_PROC :: 2 // proc() -> ()
@@ -66,7 +67,7 @@ CG_Context :: struct {
 	functions:          spv.Builder,
 
 	current_id:         spv.Id,
-	checker:            ^Checker,
+	checker:            ^checker.Checker,
 	scopes:             [dynamic]CG_Scope,
 
 	capabilities:       map[spv.Capability]struct{},
@@ -301,8 +302,8 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 }
 
 @(require_results)
-cg_generate :: proc(
-	checker:     ^Checker,
+generate :: proc(
+	checker:     ^checker.Checker,
 	stmts:       []^ast.Stmt,
 	file_name:   Maybe(string) = nil,
 	file_source: Maybe(string) = nil,
@@ -761,7 +762,7 @@ cg_expr_binary :: proc(
 	rhs_type  := rhs_value.type
 	type_info := cg_type(ctx, type)
 
-	if op_is_relation(op) {
+	if checker.op_is_relation(op) {
 		t: ^types.Type
 		if lhs_type.kind == .Float {
 			t   = lhs_type
@@ -975,7 +976,7 @@ cg_interface :: proc(
 	builtin, ok := reflect.enum_from_name(spv.BuiltIn, builtin)
 	assert(ok)
 
-	info := interface_infos[builtin]
+	info := checker.interface_infos[builtin]
 	storage_class:     CG_Storage_Class
 	spv_storage_class: spv.StorageClass
 	switch info.usage[ctx.shader_stage] {

@@ -1,11 +1,11 @@
 #+feature dynamic-literals
-package hephaistos
+package hephaistos_checker
 
 import "base:runtime"
 
-import spv "spirv-odin"
-import "types"
-import "ast"
+import spv "../spirv-odin"
+import "../types"
+import "../ast"
 
 Interface_Usage :: enum {
 	In = 1,

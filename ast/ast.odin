@@ -44,12 +44,6 @@ Expr_Unary :: struct {
 	expr:      ^Expr,
 }
 
-Const_Value :: union {
-	bool,
-	i64,
-	f64,
-}
-
 Expr_Constant :: struct {
 	using node: Expr,
 	value:      types.Const_Value,

@@ -1,10 +1,10 @@
-package hephaistos
+package hephaistos_checker
 
 import "core:mem"
 
-import "ast"
-import "tokenizer"
-import "types"
+import "../ast"
+import "../tokenizer"
+import "../types"
 
 Entity_Kind :: enum u32 {
 	Invalid = 0,

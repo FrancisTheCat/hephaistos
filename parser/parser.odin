@@ -1,5 +1,5 @@
 #+feature dynamic-literals
-package hephaistos
+package hephaistos_parser
 
 import "base:runtime"
 
@@ -7,8 +7,8 @@ import "core:fmt"
 import "core:reflect"
 import "core:strings"
 
-import "ast"
-import "tokenizer"
+import "../ast"
+import "../tokenizer"
 
 Parser :: struct {
 	current:         int,
@@ -993,4 +993,9 @@ parse :: proc(
 
 parser_at_end :: proc(parser: ^Parser) -> bool {
 	return token_peek(parser).kind == .EOF
+}
+
+error :: proc {
+	error_parser_start_end,
+	error_parser_single_token,
 }
