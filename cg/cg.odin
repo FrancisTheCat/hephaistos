@@ -1035,14 +1035,17 @@ cg_cast :: proc(
 	value:    CG_Value,
 	type:    ^types.Type,
 ) -> spv.Id {
-	if types.equal(value.type, type) {
+	type   := types.base_type(type)
+	v_type := types.base_type(value.type)
+
+	if types.equal(v_type, type) {
 		return cg_deref(ctx, builder, value)
 	}
 
 	ti := cg_type(ctx, type)
 	#partial switch type.kind {
 	case .Float:
-		#partial switch value.type.kind {
+		#partial switch v_type.kind {
 		case .Float:
 			return spv.OpFConvert(builder,    ti.type, value.id)
 		case .Uint:
@@ -1053,7 +1056,7 @@ cg_cast :: proc(
 			unreachable()
 		}
 	case .Int:
-		#partial switch value.type.kind {
+		#partial switch v_type.kind {
 		case .Float:
 			return spv.OpConvertFToS(builder, ti.type, value.id)
 		case .Uint:
@@ -1064,7 +1067,7 @@ cg_cast :: proc(
 			unreachable()
 		}
 	case .Uint:
-		#partial switch value.type.kind {
+		#partial switch v_type.kind {
 		case .Float:
 			return spv.OpConvertFToU(builder, ti.type, value.id)
 		case .Uint:

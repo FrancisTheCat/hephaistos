@@ -53,20 +53,20 @@ fragment_main :: proc(
     	}
     }
 
-    e: #import(Some_Enum);
+    e: #import(Some_Enum) = .C
     switch e {
 	case .A:
 	case .B:
 	case .C:
 	}
 
-	when false {
+	when true {
 		e = .C
 
 		if e == .B {
 		
 		}
-
+	} else {
 		v: [3]i32
 		x := cross(v, v)
 	}

@@ -355,13 +355,13 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 	case ^ast.Stmt_Assign:
 		lhs := make([]Operand, len(v.lhs), checker.allocator)
-		rhs := make([]Operand, len(v.rhs), checker.allocator)
+		// rhs := make([]Operand, len(v.rhs), checker.allocator)
 		for &lhs, i in lhs {
 			lhs = check_expr(checker, v.lhs[i])
 		}
-		for &rhs, i in rhs {
-			rhs = check_expr(checker, v.rhs[i])
-		}
+		// for &rhs, i in rhs {
+		// 	rhs = check_expr(checker, v.rhs[i])
+		// }
 
 		for &l in lhs {
 			if l.mode != .LValue {
@@ -372,7 +372,12 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		v.types = make([]^types.Type, len(lhs), checker.allocator)
 
 		lhs_i := 0
-		check_assignment_types: for &r in rhs {
+		check_assignment_types: for &r in v.rhs {
+			type_hint: ^types.Type
+			if lhs_i < len(lhs) {
+				type_hint = lhs[lhs_i].type
+			}
+			r := check_expr(checker, r, type_hint = type_hint)
 			if r.type.kind == .Tuple {
 				for field in r.type.variant.(^types.Struct).fields {
 					if lhs_i >= len(lhs) {
@@ -1259,7 +1264,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 	case ^ast.Expr_Binary:
 		// TODO: check applicability of operator
 		lhs := check_expr(checker, v.lhs)
-		rhs := check_expr(checker, v.rhs)
+		rhs := check_expr(checker, v.rhs, type_hint = lhs.type if v.op != .Multiply else nil)
 
 		operand.type = types.op_result_type(lhs.type, rhs.type, v.op == .Multiply, checker.allocator)
 		if operand.type.kind == .Invalid {
@@ -1578,9 +1583,11 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			operand.is_call = true
 		}
 	case ^ast.Expr_Compound:
-		type := type_hint
-		if type == nil {
+		type: ^types.Type
+		if v.type_expr != nil {
 			type = check_type(checker, v.type_expr)
+		} else {
+			type = type_hint
 		}
 		if type == nil {
 			error(checker, v, "missing type in compound literal")

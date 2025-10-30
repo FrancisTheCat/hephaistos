@@ -68,7 +68,7 @@ main :: proc() {
 	defer delete(defines)
 
 	FILE_NAME :: "example.hep"
-	source    := #load(FILE_NAME, string)
+	source := #load(FILE_NAME, string)
 	code, errors := hep.compile_shader(
 		source,
 		FILE_NAME,
