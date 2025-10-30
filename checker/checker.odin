@@ -41,6 +41,23 @@ addressing_mode_string := [Addressing_Mode]string {
 	.Builtin  = "builtin",
 }
 
+@(rodata)
+builtin_names: [ast.Builtin_Id]string = {
+	.Invalid   = "invalid",
+	.Dot       = "dot",
+	.Cross     = "cross",
+	.Min       = "min",
+	.Max       = "max",
+	.Clamp     = "clamp",
+	.Inverse   = "inverse",
+	.Transpose = "transpose",
+	.Pow       = "pow",
+	.Sqrt      = "sqrt",
+	.Sin       = "sin",
+	.Cos       = "cos",
+	.Tan       = "tan",
+}
+
 Operand :: struct {
 	expr:       ^ast.Expr,
 	type:       ^types.Type,
@@ -1516,16 +1533,32 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				a    := args[0]
 				b    := args[1]
 				type := types.op_result_type(a.type, b.type, false, {})
-				if vec, ok := type.variant.(^types.Vector); !ok || vec.count != 3 || !types.is_float(vec.elem) {
-					error(checker, v, "builtin 'cross' expects two 3 dimensional vectors of floats, got %v and %v", a.type, b.type)
+				if vec, ok := type.variant.(^types.Vector); !ok || vec.count != 3 {
+					error(checker, v, "builtin 'cross' expects two 3 dimensional vectors, got %v and %v", a.type, b.type)
 					break
 				}
 				operand.type = type
 				operand.mode = .RValue
-			case .Min:
-				unimplemented()
-			case .Max:
-				unimplemented()
+			case .Min, .Max:
+				if len(v.args) < 2 {
+					error(checker, v, "builtin '%s' expects at least two arguments", builtin_names[v.builtin])
+					break
+				}
+				type := args[0].type
+				for arg in args[1:] {
+					prev := type
+					type  = types.op_result_type(type, arg.type, false, {})
+					if type.kind == .Invalid {
+						error(checker, arg, "builtin '%s' expects all arguments to be of the same type, expected %v, got %v", builtin_names[v.builtin], prev, arg.type)
+						return
+					}
+				}
+				if !types.is_numeric(type) && !types.is_vector(type) {
+					error(checker, v, "builtin '%s' expects a list of vectors or scalars of the same type, got %v", builtin_names[v.builtin], type)
+					break
+				}
+				operand.type = type
+				operand.mode = .RValue
 			case .Clamp:
 				unimplemented()
 			case .Inverse:

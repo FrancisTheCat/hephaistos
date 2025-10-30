@@ -53,28 +53,17 @@ fragment_main :: proc(
     	}
     }
 
-    e := #import(Some_Enum).A
-    switch e {
+	e := #import(Some_Enum).A
+	switch e {
 	case .A:
 	case .B:
 	case .C:
 	}
 
-	when true {
-		e = .C
+	v: [3]i32
+	x := cross(v, v)
 
-		if e == .B {
-		
-		}
-	} else {
-		v: [3]i32
-		x := cross(v, v)
-	}
-
-	lighting := dot(v_normal, shadow_uniforms.light_direction)
-	if lighting < 0 {
-		lighting = 0
-	}
-	f_color = lighting * f32(1 - shadow) * texture[v_tex_coords]
+	lighting := max(dot(v_normal, shadow_uniforms.light_direction), 0)
+	f_color   = lighting * f32(1 - shadow) * texture[v_tex_coords]
 	return
 }

@@ -269,8 +269,10 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 					id := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
 					if !global {
 						init := cg_expr(ctx, value_builder, value)
-						if v.type_expr != nil && !types.equal(init.type, v.type_expr.type) {
+						if v.type_expr != nil {
 							init.id = cg_cast(ctx, builder, init, v.type_expr.type)
+						} else if value.type.size != 0 {
+							init.id = cg_cast(ctx, builder, init, value.type)
 						}
 						spv.OpStore(value_builder, id, init.id)
 					}
@@ -1224,11 +1226,57 @@ _cg_expr :: proc(
 				}
 				return { id = id, }
 			case .Cross:
-				ti := cg_type(ctx, v.type)
-				a  := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
-				b  := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), v.type)
-				id := spv_glsl.OpCross(builder, ti.type, a, b)
+				ti  := cg_type(ctx, v.type)
+				a   := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
+				b   := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), v.type)
+				e   := v.type.variant.(^types.Vector).elem
+				eti := cg_type(ctx, e)
+				id: spv.Id
+				#partial switch e.kind {
+				case .Float:
+					id = spv_glsl.OpCross(builder, ti.type, a, b)
+				case .Int, .Uint:
+					a0 := spv.OpCompositeExtract(builder, eti.type, a, 0)
+					a1 := spv.OpCompositeExtract(builder, eti.type, a, 1)
+					a2 := spv.OpCompositeExtract(builder, eti.type, a, 2)
+
+					b0 := spv.OpCompositeExtract(builder, eti.type, b, 0)
+					b1 := spv.OpCompositeExtract(builder, eti.type, b, 1)
+					b2 := spv.OpCompositeExtract(builder, eti.type, b, 2)
+
+					x := spv.OpISub(builder, eti.type, spv.OpIMul(builder, eti.type, a1, b2), spv.OpIMul(builder, eti.type, b1, a2))
+					y := spv.OpISub(builder, eti.type, spv.OpIMul(builder, eti.type, a2, b0), spv.OpIMul(builder, eti.type, b2, a0))
+					z := spv.OpISub(builder, eti.type, spv.OpIMul(builder, eti.type, a0, b1), spv.OpIMul(builder, eti.type, b0, a1))
+
+					id = spv.OpCompositeConstruct(builder, ti.type, x, y, z)
+				case:
+					unreachable()
+				}
 				return { id = id, }
+			case .Min, .Max:
+				ti := cg_type(ctx, v.type)
+				f: type_of(spv_glsl.OpFMin)
+				elem_type := v.type
+				if v.type.kind == .Vector {
+					elem_type = v.type.variant.(^types.Vector).elem
+				}
+
+				#partial switch elem_type.kind {
+				case .Float:
+					f = spv_glsl.OpFMin if v.builtin == .Min else spv_glsl.OpFMax
+				case .Int:
+					f = spv_glsl.OpSMin if v.builtin == .Min else spv_glsl.OpSMax
+				case .Uint:
+					f = spv_glsl.OpUMin if v.builtin == .Min else spv_glsl.OpUMax
+				}
+
+				running := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
+				for arg in v.args[1:] {
+					current := cg_cast(ctx, builder, cg_expr(ctx, builder, arg.value), v.type)
+					running  = f(builder, ti.type, running, current)
+				}
+
+				return { id = running, }
 			case:
 				unimplemented()
 			}
