@@ -43,19 +43,21 @@ addressing_mode_string := [Addressing_Mode]string {
 
 @(rodata)
 builtin_names: [ast.Builtin_Id]string = {
-	.Invalid   = "invalid",
-	.Dot       = "dot",
-	.Cross     = "cross",
-	.Min       = "min",
-	.Max       = "max",
-	.Clamp     = "clamp",
-	.Inverse   = "inverse",
-	.Transpose = "transpose",
-	.Pow       = "pow",
-	.Sqrt      = "sqrt",
-	.Sin       = "sin",
-	.Cos       = "cos",
-	.Tan       = "tan",
+	.Invalid     = "invalid",
+	.Dot         = "dot",
+	.Cross       = "cross",
+	.Min         = "min",
+	.Max         = "max",
+	.Clamp       = "clamp",
+	.Inverse     = "inverse",
+	.Transpose   = "transpose",
+	.Determinant = "determinant",
+	.Pow         = "pow",
+	.Sqrt        = "sqrt",
+	.Sin         = "sin",
+	.Cos         = "cos",
+	.Tan         = "tan",
+	.Normalize   = "normalize",
 }
 
 Operand :: struct {
@@ -679,21 +681,24 @@ checker_init :: proc(
 	scope_insert_entity(checker, entity_new(.Type, { text = "u32",  }, types.t_u32,  allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Type, { text = "u64",  }, types.t_u64,  allocator = allocator))
 
+	scope_insert_entity(checker, entity_new(.Type, { text = "f16",  }, types.t_f16,  allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Type, { text = "f32",  }, types.t_f32,  allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Type, { text = "f64",  }, types.t_f64,  allocator = allocator))
 
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "dot",       }, nil, builtin_id = .Dot,       allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "cross",     }, nil, builtin_id = .Cross,     allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "min",       }, nil, builtin_id = .Min,       allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "max",       }, nil, builtin_id = .Max,       allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "clamp",     }, nil, builtin_id = .Clamp,     allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "inverse",   }, nil, builtin_id = .Inverse,   allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "transpose", }, nil, builtin_id = .Transpose, allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "pow",       }, nil, builtin_id = .Pow,       allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "sqrt",      }, nil, builtin_id = .Sqrt,      allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "sin",       }, nil, builtin_id = .Sin,       allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "cos",       }, nil, builtin_id = .Cos,       allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "tan",       }, nil, builtin_id = .Tan,       allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "dot",         }, nil, builtin_id = .Dot,         allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "cross",       }, nil, builtin_id = .Cross,       allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "min",         }, nil, builtin_id = .Min,         allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "max",         }, nil, builtin_id = .Max,         allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "clamp",       }, nil, builtin_id = .Clamp,       allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "inverse",     }, nil, builtin_id = .Inverse,     allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "transpose",   }, nil, builtin_id = .Transpose,   allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "determinant", }, nil, builtin_id = .Determinant, allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "pow",         }, nil, builtin_id = .Pow,         allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "sqrt",        }, nil, builtin_id = .Sqrt,        allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "sin",         }, nil, builtin_id = .Sin,         allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "cos",         }, nil, builtin_id = .Cos,         allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "tan",         }, nil, builtin_id = .Tan,         allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "normalize",   }, nil, builtin_id = .Normalize,   allocator = allocator))
 
 	checker.shared_types.allocator = allocator
 	for s in shared_types {
@@ -1420,11 +1425,73 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				operand.type = type
 				operand.mode = .RValue
 			case .Clamp:
-				unimplemented()
+				if len(v.args) != 3 {
+					error(checker, v, "builtin 'clamp' expects at least three arguments, got %d", len(v.args))
+					break
+				}
+				type := args[0].type
+				for arg in args[1:] {
+					prev := type
+					type  = types.op_result_type(type, arg.type, false, {})
+					if type.kind == .Invalid {
+						error(checker, arg, "builtin 'clamp' expects all arguments to be of the same type, expected %v, got %v", prev, arg.type)
+						return
+					}
+				}
+				if !types.is_numeric(type) && !types.is_vector(type) {
+					error(checker, v, "builtin 'clamp' expects a list of vectors or scalars of the same type, got %v", type)
+					break
+				}
+				operand.type = type
+				operand.mode = .RValue
 			case .Inverse:
-				unimplemented()
+				if len(v.args) != 1 {
+					error(checker, v, "builtin 'inverse' expects one argument, got %d", len(args))
+					break
+				}
+				type := args[0].type
+				if !types.is_matrix(type) {
+					error(checker, v, "builtin 'inverse' expects an argument of type matrix, got %d", len(args))
+					break
+				}
+				if !types.matrix_is_square(type) {
+					error(checker, v, "builtin 'inverse' expects a square matrix, got %v", type)
+					break
+				}
+				operand.type = type
+				operand.mode = .RValue
 			case .Transpose:
-				unimplemented()
+				if len(v.args) != 1 {
+					error(checker, v, "builtin 'transpose' expects one argument, got %d", len(args))
+					break
+				}
+				type := args[0].type
+				if !types.is_matrix(type) {
+					error(checker, v, "builtin 'transpose' expects an argument of type matrix, got %d", len(args))
+					break
+				}
+				if !types.matrix_is_square(type) {
+					m   := type.variant.(^types.Matrix)
+					type = types.matrix_new(types.vector_new(types.matrix_elem_type(type), m.cols, checker.allocator), m.col_type.count, checker.allocator)
+				}
+				operand.type = type
+				operand.mode = .RValue
+			case .Determinant:
+				if len(v.args) != 1 {
+					error(checker, v, "builtin 'determinant' expects one argument, got %d", len(args))
+					break
+				}
+				type := args[0].type
+				if !types.is_matrix(type) {
+					error(checker, v, "builtin 'determinant' expects an argument of type matrix, got %v", type)
+					break
+				}
+				if !types.matrix_is_square(type) {
+					error(checker, v, "builtin 'determinant' expects a square matrix, got %v", type)
+					break
+				}
+				operand.type = types.matrix_elem_type(type)
+				operand.mode = .RValue
 			case .Sqrt:
 				if len(v.args) != 1 {
 					error(checker, v, "builtin 'sqrt' expects one argument, got %d", len(args))
@@ -1495,6 +1562,18 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				operand.mode = .RValue
 				operand.type = type
+			case .Normalize:
+				if len(v.args) != 1 {
+					error(checker, v, "builtin 'normalize' expects one argument, got %d", len(v.args))
+					return
+				}
+				v := args[0]
+				if !types.is_vector(v.type) || !types.is_float(v.type.variant.(^types.Vector).elem) {
+					error(checker, v, "builtin 'tan' expects a vector of floats, got %v", v.type)
+					return
+				}
+				operand.mode = .RValue
+				operand.type = v.type
 			}
 			
 		case .Type:

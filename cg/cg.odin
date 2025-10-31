@@ -1331,6 +1331,35 @@ _cg_expr :: proc(
 				x := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
 				y := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), v.type)
 				return { id = spv_glsl.OpPow(builder, ti.type, x, y), }
+			case .Normalize:
+				v := cg_expr(ctx, builder, v.args[0].value)
+				return { id = spv_glsl.OpNormalize(builder, cg_type(ctx, v.type).type, v.id), }
+			case .Clamp:
+				elem_type := v.type
+				if v.type.kind == .Vector {
+					elem_type = v.type.variant.(^types.Vector).elem
+				}
+
+				value := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
+				min   := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), v.type)
+				max   := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[2].value), v.type)
+
+				id: spv.Id
+				#partial switch elem_type.kind {
+				case .Float:
+					id = spv_glsl.OpFClamp(builder, cg_type(ctx, v.type).type, value, min, max)
+				case .Int:
+					id = spv_glsl.OpSClamp(builder, cg_type(ctx, v.type).type, value, min, max)
+				case .Uint:
+					id = spv_glsl.OpUClamp(builder, cg_type(ctx, v.type).type, value, min, max)
+				}
+				return { id = id, }
+			case .Determinant:
+				return { id = spv_glsl.OpDeterminant  (builder, cg_type(ctx, v.type).type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Inverse:
+				return { id = spv_glsl.OpMatrixInverse(builder, cg_type(ctx, v.type).type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Transpose:
+				return { id = spv.OpTranspose         (builder, cg_type(ctx, v.type).type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case:
 				unimplemented()
 			}

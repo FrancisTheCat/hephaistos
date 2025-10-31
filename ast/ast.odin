@@ -107,11 +107,13 @@ Builtin_Id :: enum {
 	Clamp,
 	Inverse,
 	Transpose,
+	Determinant,
 	Pow,
 	Sqrt,
 	Sin,
 	Cos,
 	Tan,
+	Normalize,
 }
 
 Expr_Call :: struct {

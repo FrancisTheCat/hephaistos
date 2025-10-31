@@ -127,6 +127,7 @@ t_u16     := &Type{kind = .Uint,    size = 2, align = 2}
 t_u32     := &Type{kind = .Uint,    size = 4, align = 4}
 t_u64     := &Type{kind = .Uint,    size = 8, align = 8}
 
+t_f16     := &Type{kind = .Float,   size = 2, align = 2}
 t_f32     := &Type{kind = .Float,   size = 4, align = 4}
 t_f64     := &Type{kind = .Float,   size = 8, align = 8}
 
@@ -626,6 +627,12 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 @(require_results)
 matrix_elem_type :: proc(t: ^Type) -> ^Type {
 	return t.variant.(^Matrix).col_type.elem
+}
+
+@(require_results)
+matrix_is_square :: proc(t: ^Type) -> bool {
+	m := t.variant.(^Matrix)
+	return m.col_type.count == m.cols
 }
 
 @(require_results)
