@@ -259,8 +259,10 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		if !types.is_numeric(start.type) {
 			error(checker, v.end, "non-numeric type in range statment: %v", start.type)
 		}
-		iter_type := types.op_result_type(start.type, end.type, false, checker.allocator)
-		iter_type  = types.default_type(iter_type)
+		iter_type        := types.op_result_type(start.type, end.type, false, checker.allocator)
+		iter_type         = types.default_type(iter_type)
+		v.start_expr.type = iter_type
+		v.end_expr.type   = iter_type
 		if iter_type.kind == .Invalid {
 			error(checker, v.end, "mismatched types in range stmt: %v vs %v", start.type, end.type)
 		}
@@ -374,13 +376,9 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 	case ^ast.Stmt_Assign:
 		lhs := make([]Operand, len(v.lhs), checker.allocator)
-		// rhs := make([]Operand, len(v.rhs), checker.allocator)
 		for &lhs, i in lhs {
 			lhs = check_expr(checker, v.lhs[i])
 		}
-		// for &rhs, i in rhs {
-		// 	rhs = check_expr(checker, v.rhs[i])
-		// }
 
 		for &l in lhs {
 			if l.mode != .LValue {
@@ -391,12 +389,12 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		v.types = make([]^types.Type, len(lhs), checker.allocator)
 
 		lhs_i := 0
-		check_assignment_types: for &r in v.rhs {
+		check_assignment_types: for &r_expr in v.rhs {
 			type_hint: ^types.Type
 			if lhs_i < len(lhs) {
 				type_hint = lhs[lhs_i].type
 			}
-			r := check_expr(checker, r, type_hint = type_hint)
+			r := check_expr(checker, r_expr, type_hint = type_hint)
 			if r.type.kind == .Tuple {
 				for field in r.type.variant.(^types.Struct).fields {
 					if lhs_i >= len(lhs) {
@@ -419,7 +417,8 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					error(checker, v, "mismatched types in assign statement: %v vs %v", lhs[lhs_i].type, r.type)
 				}
 				v.types[lhs_i] = result_type
-				lhs_i += 1
+				r_expr.type    = result_type
+				lhs_i         += 1
 			}
 		}
 		if lhs_i != len(lhs) {
@@ -628,7 +627,8 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 						error(checker, stmt, "mismatched types in value declaration: %v vs %v", explicit_type, r.type)
 					}
 				}
-				v.types[name_i] = type
+				v.types[name_i]       = type
+				v.values[name_i].type = type
 
 				scope_insert_entity(checker, entity_new(entity_kind, name, type, value = value, decl = v, allocator = checker.allocator))
 				name_i += 1
@@ -1155,6 +1155,11 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			return
 		}
 
+		if v.op != .Multiply || !(types.is_matrix(lhs.type) || types.is_matrix(rhs.type)) {
+			v.lhs.type = operand.type
+			v.rhs.type = operand.type
+		}
+
 		if !types.operator_applicable(operand.type, v.op) {
 			error(checker, v, "operator %v is not defined in `%v %v %v`", tokenizer.to_string(v.op), lhs.type, tokenizer.to_string(v.op), rhs.type)
 			return
@@ -1417,6 +1422,9 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 						error(checker, arg, "builtin '%s' expects all arguments to be of the same type, expected %v, got %v", builtin_names[v.builtin], prev, arg.type)
 						return
 					}
+				}
+				for &arg in v.args {
+					arg.value.type = type
 				}
 				if !types.is_numeric(type) && !types.is_vector(type) {
 					error(checker, v, "builtin '%s' expects a list of vectors or scalars of the same type, got %v", builtin_names[v.builtin], type)
@@ -1689,6 +1697,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 						error(checker, field.value, "expected value of type %v but got %v", struct_field.type, field_operand.type)
 						return
 					}
+					field.value.type = struct_field.type
 				}
 			} else {
 				if len(v.fields) != len(type.fields) {
@@ -1704,6 +1713,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 						error(checker, field.value, "expected value of type %v but got %v", struct_field.type, field_operand.type)
 						return
 					}
+					field.value.type = struct_field.type
 				}
 			}
 		case .Vector:
@@ -1722,7 +1732,8 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					t         = v.elem
 					n_values += v.count
 				} else {
-					n_values += 1
+					n_values        += 1
+					field.value.type = type.elem
 				}
 				if !types.implicitly_castable(t, type.elem) {
 					error(checker, field.value, "expected value of type %v but got %v", type.elem, f.type)
@@ -1750,6 +1761,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					error(checker, field.value, "expected value of type %v but got %v", type.col_type.elem, f.type)
 					return
 				}
+				field.value.type = type.col_type.elem
 			}
 		case:
 			error(checker, v, "illegal type in compound literal: %v", type)
