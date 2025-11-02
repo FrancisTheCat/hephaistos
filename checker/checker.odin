@@ -1326,7 +1326,9 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		}
 
 		if lhs.type.kind == .Vector {
+			duplicates := false
 			for char in v.selector.text {
+				seen: [4]bool
 				index: int = -1
 				switch char {
 				case 'r', 'x':
@@ -1341,6 +1343,12 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				if index == -1 || index > lhs.type.variant.(^types.Vector).count {
 					error(checker, v, "can not swizzle vector of type %s with coordinate '%v'", lhs.type, char)
 				}
+				if index != -1 {
+					if seen[index] {
+						duplicates = true
+					}
+					seen[index] = true
+				}
 			}
 
 			if len(v.selector.text) == 1 {
@@ -1351,6 +1359,9 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 
 			operand.type = types.vector_new(lhs.type.variant.(^types.Vector).elem, len(v.selector.text), checker.allocator)
 			operand.mode = lhs.mode
+			if duplicates {
+				operand.mode = .RValue
+			}
 			return
 		}
 

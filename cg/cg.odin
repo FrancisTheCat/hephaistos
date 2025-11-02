@@ -15,7 +15,8 @@ import spv_glsl "../spirv-odin/spirv_glsl"
 VOID, VOID_PROC: spv.Id
 
 CG_Storage_Class :: enum {
-	Global = 1,
+	By_Value = 0,
+	Global,
 	Function,
 	Uniform,
 	Input,
@@ -91,7 +92,8 @@ CG_Value :: struct {
 	id:              spv.Id,
 	storage_class:   CG_Storage_Class,
 	type:            ^types.Type,
-	swizzle:         string,
+	real_type:       ^types.Type, // non swizzled type
+	swizzle:         []u32,
 	explicit_layout: bool,
 }
 
@@ -464,6 +466,8 @@ cg_type_ptr_from_type :: proc(ctx: ^CG_Context, type_info: ^CG_Type_Info, storag
 	if type_info.ptr_types[storage_class] == 0 {
 		spv_storage_class: spv.StorageClass
 		switch storage_class {
+		case .By_Value:
+			panic("")
 		case .Global:
 			spv_storage_class = .Private
 		case .Function:
@@ -770,23 +774,24 @@ cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
 
 @(require_results)
 cg_deref :: proc(ctx: ^CG_Context, builder: ^spv.Builder, value: CG_Value) -> spv.Id {
-	// if value.swizzle != "" {
-	// 	indices := make([]u32, len(value.swizzle))
-	// 	for coord, i in value.swizzle {
-	// 		switch coord {
-	// 		case 'x', 'r':
-	// 			indices[i] = 0
-	// 		case 'y', 'g':
-	// 			indices[i] = 1
-	// 		case 'z', 'b':
-	// 			indices[i] = 2
-	// 		case 'w', 'a':
-	// 			indices[i] = 3
-	// 		}
-	// 	}
-
-	// 	return spv.OpVectorShuffle(builder, cg_type(ctx, value.type).type, v, v, ..indices[:])
-	// }
+	if len(value.swizzle) != 0 {
+		id := value.id
+		if value.storage_class != .By_Value {
+			id = spv.OpLoad(builder, cg_type(ctx, value.real_type).type, value.id)
+		}
+		return spv.OpVectorShuffle(builder, cg_type(ctx, value.type).type, id, id, ..value.swizzle)
+	}
+	if value.explicit_layout && types.is_struct(value.type) {
+		type    := value.type.variant.(^types.Struct)
+		members := make([dynamic]spv.Id, 0, len(type.fields), context.temp_allocator)
+		// TODO: handle members that are structs
+		for f, i in type.fields {
+			field_ti  := cg_type(ctx, f.type)
+			field_ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, field_ti, value.storage_class), value.id, cg_constant(ctx, i64(i)).id)
+			append(&members, spv.OpLoad(builder, field_ti.type, field_ptr))
+		}
+		return spv.OpCompositeConstruct(builder, cg_type(ctx, value.type).type, ..members[:])
+	}
 	#partial switch value.storage_class {
 	case nil:
 		return value.id
@@ -1065,6 +1070,9 @@ cg_expr :: proc(
 	if value.type == nil {
 		value.type = expr.type
 	}
+	if value.explicit_layout {
+		fmt.println(value)
+	}
 
 	if !deref {
 		// assert(value.storage_class != nil)
@@ -1083,9 +1091,9 @@ cg_cast :: proc(
 	value:    CG_Value,
 	type:    ^types.Type,
 ) -> spv.Id {
-	type   := types.base_type(type)
-	v_type := types.base_type(value.type)
-	value  := value
+	type               := types.base_type(type)
+	v_type             := types.base_type(value.type)
+	value              := value
 	value.id            = cg_deref(ctx, builder, value)
 	value.storage_class = nil
 
@@ -1184,7 +1192,10 @@ _cg_expr :: proc(
 	case ^ast.Expr_Ident:
 		value = cg_lookup_entity(ctx, v.ident.text).value
 		#partial switch value.storage_class {
-		case .Uniform, .Global, .Push_Constant, .Output, .Uniform_Constant, .Storage_Buffer:
+		case .Push_Constant, .Storage_Buffer, .Uniform, .Uniform_Constant:
+			value.explicit_layout = true
+			fallthrough
+		case .Global:
 			ctx.referenced_globals[value.id] = {}
 		}
 		return
@@ -1243,21 +1254,13 @@ _cg_expr :: proc(
 			return { id = spv.OpVectorExtractDynamic(builder, cg_type(ctx, t).type, lhs.id, cg_constant(ctx, i64(indices[0])).id), type = t, }
 		}
 
-		for coord, i in value.swizzle {
-			switch coord {
-			case 'x', 'r':
-				indices[i] = 0
-			case 'y', 'g':
-				indices[i] = 1
-			case 'z', 'b':
-				indices[i] = 2
-			case 'w', 'a':
-				indices[i] = 3
-			}
+		return {
+			id            = lhs.id,
+			type          = v.type,
+			real_type     = lhs.type,
+			swizzle       = indices[:],
+			storage_class = lhs.storage_class,
 		}
-
-		val := cg_deref(ctx, builder, lhs)
-		return { id = spv.OpVectorShuffle(builder, cg_type(ctx, v.type).type, val, val, ..indices[:]), }
 
 	case ^ast.Expr_Call:
 		switch {
@@ -1450,6 +1453,12 @@ _cg_expr :: proc(
 		lhs := cg_expr(ctx, builder, v.lhs, false)
 		rhs := cg_expr(ctx, builder, v.rhs)
 
+		if types.is_vector(lhs.type) && len(lhs.swizzle) != 0 {
+			lhs.id            = cg_deref(ctx, builder, lhs)
+			lhs.storage_class = {}
+			lhs.swizzle       = {}
+		}
+
 		if lhs.storage_class != nil {
 			if types.is_sampler(lhs.type) {
 				sampler    := lhs.type.variant.(^types.Sampler)
@@ -1484,11 +1493,18 @@ _cg_expr :: proc(
 				buffer := lhs.type.variant.(^types.Buffer)
 				elem   := cg_type(ctx, buffer.elem, { .Explicit_Layout, })
 				id     := spv.OpAccessChain(builder, cg_type_ptr(ctx, elem, .Storage_Buffer), lhs.id, cg_constant(ctx, 0).id, rhs.id)
-				return { id = id, storage_class = .Storage_Buffer, type = buffer.elem, }
+				return {
+					id              = id,
+					storage_class   = .Storage_Buffer,
+					type            = buffer.elem,
+					explicit_layout = true,
+				}
 			}
-			id    := spv.OpAccessChain(builder, cg_type_ptr(ctx, v.type, lhs.storage_class), lhs.id, rhs.id)
-			value := CG_Value { id = id, storage_class = lhs.storage_class, }
-			return value
+			return {
+				id              = spv.OpAccessChain(builder, cg_type_ptr(ctx, v.type, lhs.storage_class), lhs.id, rhs.id),
+				storage_class   = lhs.storage_class,
+				explicit_layout = lhs.explicit_layout,
+			}
 		}
 
 		return { id = spv.OpVectorExtractDynamic(builder, cg_type(ctx, v.type).type, lhs.id, rhs.id), }
@@ -1810,6 +1826,21 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 		for value in v.rhs {
 			lhs := cg_expr(ctx, builder, v.lhs[lhs_i], deref = false)
 			rhs := cg_expr(ctx, builder, value)
+			if lhs.explicit_layout {
+				type := lhs.type.variant.(^types.Struct)
+				// TODO: handle members that are structs
+				for f, i in type.fields {
+					field_ti  := cg_type(ctx, f.type, { .Explicit_Layout, })
+					val       := spv.OpCompositeExtract(builder, field_ti.type, rhs.id, u32(i))
+					field_ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, field_ti, lhs.storage_class), lhs.id, cg_constant(ctx, i64(i)).id)
+					spv.OpStore(builder, field_ptr, val)
+					// append(&members, spv.OpLoad(builder, field_ti.type, field_ptr))
+				}
+				continue
+			}
+			if len(lhs.swizzle) != 0 {
+				unimplemented()
+			}
 			if v.op == nil {
 				rhs.id = cg_cast(ctx, builder, rhs, lhs.type)
 				spv.OpStore(builder, lhs.id, rhs.id)

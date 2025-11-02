@@ -1,25 +1,25 @@
-@(push_constant)
-vs_constants: #import(Vertex_Shader_Uniforms)
+// @(push_constant)
+// vs_constants: #import(Vertex_Shader_Uniforms)
 
-@(vertex_shader, link_name = "main")
-vertex_main :: proc(
-	a_position:   [3]f32 @ 0,
-	a_normal:     [3]f32 @ 1,
-	a_tex_coords: [2]f32 @ 2,
-) -> (
-	v_position:   [3]f32 @ 0,
-	v_normal:     [3]f32 @ 1,
-	v_tex_coords: [2]f32 @ 2,
-) {
-	v_position   = (vs_constants.model * [4]f32{a_position, 1}).xyz
-	v_normal     = a_normal
-	v_tex_coords = a_tex_coords
+// @(vertex_shader, link_name = "main")
+// vertex_main :: proc(
+// 	a_position:   [3]f32 @ 0,
+// 	a_normal:     [3]f32 @ 1,
+// 	a_tex_coords: [2]f32 @ 2,
+// ) -> (
+// 	v_position:   [3]f32 @ 0,
+// 	v_normal:     [3]f32 @ 1,
+// 	v_tex_coords: [2]f32 @ 2,
+// ) {
+// 	v_position   = (vs_constants.model * [4]f32{a_position, 1}).xyz
+// 	v_normal     = a_normal
+// 	v_tex_coords = a_tex_coords
 
-	$Position = vs_constants.proj * vs_constants.view * [4]f32{v_position, 1}
-	return
-}
+// 	$Position = vs_constants.proj * vs_constants.view * [4]f32{v_position, 1}
+// 	return
+// }
 
-/* FRAGMENT SHADER */
+// /* FRAGMENT SHADER */
 
 @(uniform, binding = 0)
 shadow_uniforms: #import(Shadow_Uniforms)
@@ -92,8 +92,11 @@ particles_out: []Particle
 
 @(compute_shader, local_size = {256, 1, 1})
 simulate_particles :: proc() {
-	index := $GlobalInvocationId.x
-	particles_out[index].position = particles_in[index].position + particles_in[index].velocity * compute_constants.delta_time
-	particles_out[index].velocity = particles_in[index].velocity
-	particles_out[index].color    = particles_in[index].color
+	index               := $GlobalInvocationId.x
+	particle_in         := particles_in[index]
+	particles_out[index] = {
+		position = particle_in.position + particle_in.velocity * compute_constants.delta_time,
+		velocity = particle_in.velocity,
+		color    = particle_in.color,
+	}
 }
