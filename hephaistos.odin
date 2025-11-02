@@ -152,27 +152,27 @@ when !HEPHAISTOS_NO_TYPE_FORMATTER {
 	}
 }
 
-print_error :: proc(w: io.Writer, file_name: string, lines: []string, error: Error) {
+print_error :: proc(w: io.Writer, file_name: string, lines: []string, error: Error) -> (n: int) {
 	if error.line == 0 {
-		fmt.wprintf(w, ansi.CSI + ansi.FG_RED + ansi.SGR + "Error:" + ansi.CSI + ansi.RESET + ansi.SGR + " %s\n", error.message)
-		return
+		return fmt.wprintf(w, ansi.CSI + ansi.FG_RED + ansi.SGR + "Error:" + ansi.CSI + ansi.RESET + ansi.SGR + " %s\n", error.message)
 	}
-	fmt.wprintf(w, ansi.CSI + ansi.BOLD   + ansi.SGR + "%s(%v:%v) ", file_name, error.line, error.column)
-	fmt.wprintf(w, ansi.CSI + ansi.FG_RED + ansi.SGR + "Error:" + ansi.CSI + ansi.RESET + ansi.SGR + " %s\n", error.message)
-	fmt.wprintln(w, lines[error.line - 1])
+	n += fmt.wprintf(w, ansi.CSI + ansi.BOLD   + ansi.SGR + "%s(%v:%v) ", file_name, error.line, error.column)
+	n += fmt.wprintf(w, ansi.CSI + ansi.FG_RED + ansi.SGR + "Error:" + ansi.CSI + ansi.RESET + ansi.SGR + " %s\n", error.message)
+	n += fmt.wprintln(w, lines[error.line - 1])
 	for i in 1 ..< error.column {
 		if lines[error.line - 1][i - 1] == '\t' {
-			fmt.wprint(w, "\t")
+			n += fmt.wprint(w, "\t")
 		} else {
-			fmt.wprint(w, " ")
+			n += fmt.wprint(w, " ")
 		}
 	}
-	fmt.wprint(w, ansi.CSI + ansi.FG_GREEN + ansi.SGR + "^")
+	n += fmt.wprint(w, ansi.CSI + ansi.FG_GREEN + ansi.SGR + "^")
 	for _ in error.column ..< error.end.column - 2 {
-		fmt.wprint(w, "~")
+		n += fmt.wprint(w, "~")
 	}
 	if error.column < error.end.column - 1 {
-		fmt.wprint(w, "^")
+		n += fmt.wprint(w, "^")
 	}
-	fmt.wprintln(w, ansi.CSI + ansi.RESET + ansi.SGR)
+	n += fmt.wprintln(w, ansi.CSI + ansi.RESET + ansi.SGR)
+	return
 }

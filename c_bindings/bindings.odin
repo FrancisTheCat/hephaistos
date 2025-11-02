@@ -2,6 +2,7 @@ package hephaistos_c_bindings
 
 import "base:runtime"
 
+import "core:io"
 import "core:mem"
 
 import hep ".."
@@ -45,4 +46,48 @@ hep_result_free :: proc "c" (#by_ptr r: Result) {
 	} else {
 		delete(r.instructions)
 	}
+}
+
+@(export)
+hep_error_print :: proc "c" (#by_ptr error: hep.Error, file_name: cstring, lines: [^]string, buf: [^]u8) -> int {
+	context = runtime.default_context()
+	buf := buf
+	w: io.Writer
+	if buf == nil {
+		w = {
+			procedure = proc(
+				stream_data: rawptr,
+				mode:        io.Stream_Mode,
+				p:           []byte,
+				offset:      i64,
+				whence:      io.Seek_From,
+			) -> (n: i64, err: io.Error) {
+				return i64(len(p)), nil
+			},
+			data = nil,
+		}
+	} else {
+		w = {
+			procedure = proc(
+				stream_data: rawptr,
+				mode:        io.Stream_Mode,
+				p:           []byte,
+				offset:      i64,
+				whence:      io.Seek_From,
+			) -> (n: i64, err: io.Error) {
+				if mode != .Write {
+					return
+				}
+				buf := (^[^]u8)(stream_data)
+				copy(buf[:len(p)], p)
+				buf^ = buf[len(p):]
+				return i64(len(p)), nil
+			},
+			data = &buf,
+		}
+	}
+	defer if buf != nil {
+		buf[0] = 0
+	}
+	return hep.print_error(w, string(file_name), lines[:max(int)], error) + 1
 }

@@ -26,3 +26,4 @@ typedef struct {
 
 Hep_Result hep_compile_shader(char const *source, char const *path);
 void       hep_result_free(Hep_Result const *);
+intptr_t   hep_error_print(Hep_Error const *error, char const *file_name, Hep_String const lines[], char *buf);
