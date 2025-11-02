@@ -1070,9 +1070,6 @@ cg_expr :: proc(
 	if value.type == nil {
 		value.type = expr.type
 	}
-	if value.explicit_layout {
-		fmt.println(value)
-	}
 
 	if !deref {
 		// assert(value.storage_class != nil)
