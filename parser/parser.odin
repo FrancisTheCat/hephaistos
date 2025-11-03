@@ -381,10 +381,10 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 		paren.expr = expr
 		return paren, true
 
-	case .Add, .Subtract, .Xor:
+	case .Add, .Subtract, .Xor, .Not:
 		token_advance(parser)
-		expr  := parse_expr(parser) or_return
-		unary := ast.new(ast.Expr_Unary, token.location, parser.end_location, parser.allocator)
+		expr      := parse_expr(parser, allow_compound_literals = allow_compound_literals) or_return
+		unary     := ast.new(ast.Expr_Unary, token.location, parser.end_location, parser.allocator)
 		unary.expr = expr
 		unary.op   = token.kind
 		return unary, true
@@ -448,15 +448,15 @@ binding_powers: map[tokenizer.Token_Kind]int = {
 	.Less_Equal    = 4,
 	.Greater_Equal = 4,
 
-	.Add      = 5,
-	.Subtract = 5,
+	.Add           = 5,
+	.Subtract      = 5,
 
-	.Bit_And  = 6,
-	.Bit_Or   = 6,
-	.Multiply = 6,
-	.Divide   = 6,
+	.Bit_And       = 6,
+	.Bit_Or        = 6,
+	.Multiply      = 6,
+	.Divide        = 6,
 
-	.Exponent = 7,
+	.Exponent      = 7,
 }
 
 parse_expr :: proc(parser: ^Parser, min_power := 0, allow_compound_literals := true) -> (expr: ^ast.Expr, ok: bool) {
