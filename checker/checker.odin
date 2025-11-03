@@ -1404,6 +1404,8 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					error(checker, v, "builtin 'dot' expects two vectors of the same type, got %v and %v", a.type, b.type)
 					break
 				}
+				v.args[0].value.type = type
+				v.args[1].value.type = type
 				operand.type = type.variant.(^types.Vector).elem
 				operand.mode = .RValue
 			case .Cross:
@@ -1418,6 +1420,8 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					error(checker, v, "builtin 'cross' expects two 3 dimensional vectors, got %v and %v", a.type, b.type)
 					break
 				}
+				v.args[0].value.type = type
+				v.args[1].value.type = type
 				operand.type = type
 				operand.mode = .RValue
 			case .Min, .Max:
@@ -1460,6 +1464,9 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				if !types.is_numeric(type) && !types.is_vector(type) {
 					error(checker, v, "builtin 'clamp' expects a list of vectors or scalars of the same type, got %v", type)
 					break
+				}
+				for arg in v.args {
+					arg.value.type = type
 				}
 				operand.type = type
 				operand.mode = .RValue
@@ -1579,6 +1586,8 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					error(checker, v, "builtin 'tan' expects two float vectors or scalars, got %v and %v", x.type, y.type)
 					return
 				}
+				v.args[0].value.type = type
+				v.args[1].value.type = type
 				operand.mode = .RValue
 				operand.type = type
 			case .Normalize:
