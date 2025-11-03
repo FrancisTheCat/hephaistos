@@ -1,37 +1,37 @@
-// @(push_constant)
-// vs_constants: #import(Vertex_Shader_Uniforms)
+@(push_constant)
+vs_constants: #import(Vertex_Shader_Uniforms)
 
-// @(vertex_shader, link_name = "main")
-// vertex_main :: proc(
-// 	a_position:   [3]f32 @ 0,
-// 	a_normal:     [3]f32 @ 1,
-// 	a_tex_coords: [2]f32 @ 2,
-// ) -> (
-// 	v_position:   [3]f32 @ 0,
-// 	v_normal:     [3]f32 @ 1,
-// 	v_tex_coords: [2]f32 @ 2,
-// ) {
-// 	v_position   = (vs_constants.model * [4]f32{a_position, 1}).xyz
-// 	v_normal     = a_normal
-// 	v_tex_coords = a_tex_coords
+@(vertex_shader, link_name = "main")
+vertex_main :: proc(
+	a_position:   [3]f32 @ 0,
+	a_normal:     [3]f32 @ 1,
+	a_tex_coords: [2]f32 @ 2,
+) -> (
+	v_position:   [3]f32 @ 0,
+	v_normal:     [3]f32 @ 1,
+	v_tex_coords: [2]f32 @ 2,
+) {
+	v_position   = (vs_constants.model * [4]f32{a_position, 1}).xyz
+	v_normal     = a_normal
+	v_tex_coords = a_tex_coords
 
-// 	$Position = vs_constants.proj * vs_constants.view * [4]f32{v_position, 1}
-// 	return
-// }
+	$Position = vs_constants.proj * vs_constants.view * [4]f32{v_position, 1}
+	return
+}
 
-// /* FRAGMENT SHADER */
-
-@(uniform, binding = 0)
-shadow_uniforms: #import(Shadow_Uniforms)
+/* FRAGMENT SHADER */
 
 @(binding = 1)
 texture: sampler[2][3]f32
 @(binding = 2)
 depth_texture: sampler[2]f32
 
-SOME_CONFIG_VAR :: #config(SOME_CONFIG_VAR, false)
+SHADOW_PASS :: #config(SHADOW_PASS, false)
 
-when SOME_CONFIG_VAR { }
+when !SHADOW_PASS {
+	@(uniform, binding = 0)
+	shadow_uniforms: #import(Shadow_Uniforms)
+}
 
 @(fragment_shader, link_name = "main")
 fragment_main :: proc(
@@ -41,31 +41,33 @@ fragment_main :: proc(
 ) -> (
 	f_color: [3]f32 @ 0,
 ) {
-    _shadow_position := shadow_uniforms.shadow_matrix * [4]f32{v_position, 1}
-    shadow_position  := (_shadow_position.xyz / _shadow_position.w) * 0.5 + 0.5
-    depth            := shadow_position.z
-    bias             := 0.001
-    shadow           := 0
-    if shadow_position.x >= 0 && shadow_position.x <= 1 && shadow_position.y >= 0 && shadow_position.y <= 1 {
-    	d := depth_texture[shadow_position.xy] * 0.5 + 0.5
-    	if (depth - bias > d) {
-    		shadow = 1
-    	}
-    }
+	when !SHADOW_PASS {
+	    _shadow_position := shadow_uniforms.shadow_matrix * [4]f32{v_position, 1}
+	    shadow_position  := (_shadow_position.xyz / _shadow_position.w) * 0.5 + 0.5
+	    depth            := shadow_position.z
+	    bias             := 0.001
+	    shadow           := 0
+	    if shadow_position.x >= 0 && shadow_position.x <= 1 && shadow_position.y >= 0 && shadow_position.y <= 1 {
+	    	d := depth_texture[shadow_position.xy] * 0.5 + 0.5
+	    	if (depth - bias > d) {
+	    		shadow = 1
+	    	}
+	    }
 
-	e := #import(Some_Enum).A
-	switch e {
-	case .A:
-	case .B:
-	case .C:
+		e := #import(Some_Enum).A
+		switch e {
+		case .A:
+		case .B:
+		case .C:
+		}
+
+		v: [3]i32
+		x := cross(v, v)
+
+		lighting := max(dot(v_normal, shadow_uniforms.light_direction), 0)
+		f_color   = lighting * f32(1 - shadow) * texture[v_tex_coords]
+		return
 	}
-
-	v: [3]i32
-	x := cross(v, v)
-
-	lighting := max(dot(v_normal, shadow_uniforms.light_direction), 0)
-	f_color   = lighting * f32(1 - shadow) * texture[v_tex_coords]
-	return
 }
 
 @(fragment_shader)

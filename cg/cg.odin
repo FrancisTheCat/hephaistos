@@ -725,9 +725,10 @@ cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
 
 	returned := cg_stmt_list(ctx, &body, p.body)
 	if !returned {
-		if len(type.returns) != 0 {
-			value := spv.OpLoad(&body, return_type_info.type, return_value)
-			spv.OpReturnValue(&body, value)
+		proc_scope  := cg_lookup_proc_scope(ctx)
+		return_type := cg_type(ctx, proc_scope.return_type)
+		if proc_scope.return_value != 0 {
+			spv.OpReturnValue(&body, spv.OpLoad(&body, return_type.type, proc_scope.return_value))
 		} else {
 			spv.OpReturn(&body)
 		}
@@ -1767,6 +1768,7 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 		append(&builder.data, ..else_block.data[:])
 		append(&builder.data, ..end_block.data[:])
 	case ^ast.Stmt_When:
+		fmt.println(v.cond)
 		if v.cond.const_value.(bool) {
 			cg_stmt_list(ctx, builder, v.then_block)
 		} else {
