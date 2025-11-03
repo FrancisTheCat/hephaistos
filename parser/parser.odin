@@ -1,4 +1,3 @@
-#+feature dynamic-literals
 package hephaistos_parser
 
 import "base:runtime"
@@ -437,7 +436,7 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 	return
 }
 
-binding_powers: map[tokenizer.Token_Kind]int = {
+binding_powers: #sparse [tokenizer.Token_Kind]int = #partial {
 	.And           = 3,
 	.Or            = 3,
 
@@ -493,8 +492,8 @@ parse_expr :: proc(parser: ^Parser, min_power := 0, allow_compound_literals := t
 			continue
 		}
 
-		power := binding_powers[op.kind] or_break
-		if power <= min_power {
+		power := binding_powers[op.kind]
+		if power == 0 || power <= min_power {
 			break
 		}
 		token_advance(parser)

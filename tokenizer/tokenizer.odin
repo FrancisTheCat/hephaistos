@@ -1,8 +1,11 @@
-#+feature dynamic-literals
 package hephaistos_tokenizer
+
+import "base:runtime"
 
 import "core:fmt"
 import "core:strconv"
+import "core:strings"
+import "core:reflect"
 
 Token_Kind :: enum u16 {
 	Invalid       = 0,
@@ -82,27 +85,14 @@ Token_Kind :: enum u16 {
 	Cast,
 }
 
-keyword_strings := map[string]Token_Kind{
-	"return"      = .Return,
-	"if"          = .If,
-	"else"        = .Else,
-	"for"         = .For,
-	"break"       = .Break,
-	"continue"    = .Continue,
-	"switch"      = .Switch,
-	"case"        = .Case,
-	"fallthrough" = .Fallthrough,
-	"in"          = .In,
-	"when"        = .When,
+keyword_strings: map[string]Token_Kind
 
-	"struct"      = .Struct,
-	"enum"        = .Enum,
-	"proc"        = .Proc,
-	"vector"      = .Vector,
-	"matrix"      = .Matrix,
-	"sampler"     = .Sampler,
-
-	"cast"        = .Cast,
+@(init)
+_init_keyword_strings :: proc "contextless" () {
+	context = runtime.default_context()
+	for k in Token_Kind._Keyword_Start ..= max(Token_Kind) {
+		keyword_strings[strings.to_lower(reflect.enum_string(k))] = k
+	}
 }
 
 when ODIN_DEBUG {

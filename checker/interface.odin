@@ -1,4 +1,3 @@
-#+feature dynamic-literals
 package hephaistos_checker
 
 import "base:runtime"
