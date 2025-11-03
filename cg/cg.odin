@@ -1768,7 +1768,6 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 		append(&builder.data, ..else_block.data[:])
 		append(&builder.data, ..end_block.data[:])
 	case ^ast.Stmt_When:
-		fmt.println(v.cond)
 		if v.cond.const_value.(bool) {
 			cg_stmt_list(ctx, builder, v.then_block)
 		} else {
