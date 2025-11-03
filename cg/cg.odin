@@ -1264,7 +1264,9 @@ _cg_expr :: proc(
 		switch {
 		case v.builtin != nil:
 			ti := cg_type(ctx, v.type)
-			#partial switch v.builtin {
+			switch v.builtin {
+			case .Invalid, .Size_Of, .Align_Of, .Type_Of:
+				fmt.panicf("invalid builtin: %v", v.builtin)
 			case .Dot:
 				t  := types.op_result_type(v.args[0].value.type, v.args[1].value.type, false, {})
 				a  := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), t)
@@ -1372,8 +1374,6 @@ _cg_expr :: proc(
 				return { id = spv_glsl.OpMatrixInverse(builder, cg_type(ctx, v.type).type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Transpose:
 				return { id = spv.OpTranspose         (builder, cg_type(ctx, v.type).type, cg_expr(ctx, builder, v.args[0].value).id), }
-			case:
-				unimplemented()
 			}
 		case v.is_cast:
 			return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type), }
@@ -1769,9 +1769,9 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 		append(&builder.data, ..end_block.data[:])
 	case ^ast.Stmt_When:
 		if v.cond.const_value.(bool) {
-			cg_stmt_list(ctx, builder, v.then_block, global = global)
+			return cg_stmt_list(ctx, builder, v.then_block, global = global)
 		} else {
-			cg_stmt_list(ctx, builder, v.else_block, global = global)
+			return cg_stmt_list(ctx, builder, v.else_block, global = global)
 		}
 	case ^ast.Stmt_Switch:
 		cg_scope_push(ctx, v.label.text)

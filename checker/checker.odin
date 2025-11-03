@@ -58,6 +58,9 @@ builtin_names: [ast.Builtin_Id]string = {
 	.Cos         = "cos",
 	.Tan         = "tan",
 	.Normalize   = "normalize",
+	.Size_Of     = "size_of",
+	.Align_Of    = "align_of",
+	.Type_Of     = "type_of",
 }
 
 Operand :: struct {
@@ -699,6 +702,10 @@ checker_init :: proc(
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "cos",         }, nil, builtin_id = .Cos,         allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "tan",         }, nil, builtin_id = .Tan,         allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "normalize",   }, nil, builtin_id = .Normalize,   allocator = allocator))
+
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "size_of",     }, nil, builtin_id = .Size_Of,     allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "align_of",    }, nil, builtin_id = .Align_Of,    allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "type_of",     }, nil, builtin_id = .Type_Of,     allocator = allocator))
 
 	checker.shared_types.allocator = allocator
 	for s in shared_types {
@@ -1383,15 +1390,45 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			return
 		case .Builtin:
 			v.builtin = fn.builtin_id
+
+			allow_types := false
+			#partial switch v.builtin {
+			case .Size_Of, .Align_Of, .Min, .Max:
+				allow_types = true
+			}
 			
 			args := make([]Operand, len(v.args), context.temp_allocator)
 			for &arg, i in args {
-				arg = check_expr(checker, v.args[i].value)
+				if allow_types {
+					arg = check_expr_or_type(checker, v.args[i].value)
+				} else {
+					arg = check_expr(checker, v.args[i].value)
+				}
 			}
 
 			switch v.builtin {
 			case .Invalid:
 				panic("invalid builtin")
+			case .Size_Of, .Align_Of:
+				if len(v.args) != 1 {
+					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(v.args))
+					break
+				}
+				type := types.default_type(args[0].type)
+				if v.builtin == .Size_Of {
+					operand.value = i64(type.size)
+				} else {
+					operand.value = i64(type.align)
+				}
+				operand.mode = .Const
+				operand.type = types.t_int
+			case .Type_Of:
+				if len(v.args) != 1 {
+					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(v.args))
+					break
+				}
+				operand.type = args[0].type
+				operand.mode = .Type
 			case .Dot:
 				if len(v.args) != 2 {
 					error(checker, v, "builtin 'dot' expects two arguments, got %d", len(v.args))

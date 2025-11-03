@@ -114,6 +114,9 @@ Builtin_Id :: enum {
 	Cos,
 	Tan,
 	Normalize,
+	Size_Of,
+	Align_Of,
+	Type_Of,
 }
 
 Expr_Call :: struct {
