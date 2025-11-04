@@ -45,6 +45,8 @@ fragment_main :: proc(
 	    _shadow_position := shadow_uniforms.shadow_matrix * [4]f32{v_position, 1}
 	    shadow_position  := (_shadow_position.xyz / _shadow_position.w) * 0.5 + 0.5
 	    depth            := shadow_position.z
+	    dx               := ddx(depth)
+	    dy               := ddy(depth)
 	    bias             := 0.001
 	    shadow           := 0
 	    if shadow_position.x >= 0 && shadow_position.x <= 1 && shadow_position.y >= 0 && shadow_position.y <= 1 {

@@ -62,6 +62,10 @@ builtin_names: [ast.Builtin_Id]string = {
 	.Log         = "log",
 	.Exp2        = "exp2",
 	.Log2        = "log2",
+
+	.Ddx         = "ddx",
+	.Ddy         = "ddy",
+
 	.Size_Of     = "size_of",
 	.Align_Of    = "align_of",
 	.Type_Of     = "type_of",
@@ -710,6 +714,9 @@ checker_init :: proc(
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "log2",        }, nil, builtin_id = .Log2,        allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "exp2",        }, nil, builtin_id = .Exp2,        allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "normalize",   }, nil, builtin_id = .Normalize,   allocator = allocator))
+
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "ddx",         }, nil, builtin_id = .Ddx,         allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "ddy",         }, nil, builtin_id = .Ddy,         allocator = allocator))
 
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "size_of",     }, nil, builtin_id = .Size_Of,     allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "align_of",    }, nil, builtin_id = .Align_Of,    allocator = allocator))
@@ -1563,6 +1570,12 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				operand.type = types.matrix_elem_type(type)
 				operand.mode = .RValue
+			case .Ddx, .Ddy:
+				if checker.shader_stage != .Fragment {
+					error(checker, v, "builtin '%s' can only be used in fragment shaders", builtin_names[v.builtin])
+					break
+				}
+				fallthrough
 			case .Sqrt, .Sin, .Cos, .Tan, .Exp, .Exp2, .Log, .Log2:
 				if len(v.args) != 1 {
 					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(args))

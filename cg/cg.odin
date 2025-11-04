@@ -1382,6 +1382,10 @@ _cg_expr :: proc(
 				return { id = spv_glsl.OpMatrixInverse(builder, cg_type(ctx, v.type).type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Transpose:
 				return { id = spv.OpTranspose         (builder, cg_type(ctx, v.type).type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Ddx:
+				return { id = spv.OpDPdx(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Ddy:
+				return { id = spv.OpDPdy(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			}
 		case v.is_cast:
 			return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type), }

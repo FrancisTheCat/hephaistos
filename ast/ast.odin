@@ -118,6 +118,9 @@ Builtin_Id :: enum {
 	Log,
 	Exp2,
 	Log2,
+
+	Ddx,
+	Ddy,
 	
 	Size_Of,
 	Align_Of,
