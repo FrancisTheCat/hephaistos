@@ -1341,6 +1341,14 @@ _cg_expr :: proc(
 				return { id = spv_glsl.OpCos(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Tan:
 				return { id = spv_glsl.OpTan(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Exp:
+				return { id = spv_glsl.OpExp(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Log:
+				return { id = spv_glsl.OpLog(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Exp2:
+				return { id = spv_glsl.OpExp2(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Log2:
+				return { id = spv_glsl.OpLog2(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Pow:
 				x := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
 				y := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), v.type)

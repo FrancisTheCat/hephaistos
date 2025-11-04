@@ -58,6 +58,10 @@ builtin_names: [ast.Builtin_Id]string = {
 	.Cos         = "cos",
 	.Tan         = "tan",
 	.Normalize   = "normalize",
+	.Exp         = "exp",
+	.Log         = "log",
+	.Exp2        = "exp2",
+	.Log2        = "log2",
 	.Size_Of     = "size_of",
 	.Align_Of    = "align_of",
 	.Type_Of     = "type_of",
@@ -701,6 +705,10 @@ checker_init :: proc(
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "sin",         }, nil, builtin_id = .Sin,         allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "cos",         }, nil, builtin_id = .Cos,         allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "tan",         }, nil, builtin_id = .Tan,         allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "exp",         }, nil, builtin_id = .Exp,         allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "log",         }, nil, builtin_id = .Log,         allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "log2",        }, nil, builtin_id = .Log2,        allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "exp2",        }, nil, builtin_id = .Exp2,        allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "normalize",   }, nil, builtin_id = .Normalize,   allocator = allocator))
 
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "size_of",     }, nil, builtin_id = .Size_Of,     allocator = allocator))
@@ -1555,58 +1563,20 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				operand.type = types.matrix_elem_type(type)
 				operand.mode = .RValue
-			case .Sqrt:
+			case .Sqrt, .Sin, .Cos, .Tan, .Exp, .Exp2, .Log, .Log2:
 				if len(v.args) != 1 {
-					error(checker, v, "builtin 'sqrt' expects one argument, got %d", len(args))
+					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(args))
 					break
 				}
 				arg  := args[0]
 				type := types.op_result_type(arg.type, types.t_f32, false, {})
-				if type.kind == .Invalid {
-					error(checker, v, "builtin 'sqrt' expects one argument of type float or vector, got %v", arg.type)
+				if type.kind == .Invalid || type.kind == .Matrix {
+					error(checker, v, "builtin '%s' expects one argument of type float or vector, got %v", builtin_names[v.builtin], arg.type)
 					return
 				}
-				operand.mode = .RValue
-				operand.type = type
-			case .Sin:
-				if len(v.args) != 1 {
-					error(checker, v, "builtin 'sin' expects one argument, got %d", len(args))
-					break
-				}
-				arg  := args[0]
-				type := types.op_result_type(arg.type, types.t_f32, false, {})
-				if type.kind == .Invalid {
-					error(checker, v, "builtin 'sin' expects one argument of type float or vector, got %v", arg.type)
-					return
-				}
-				operand.mode = .RValue
-				operand.type = type
-			case .Cos:
-				if len(v.args) != 1 {
-					error(checker, v, "builtin 'cos' expects one argument, got %d", len(args))
-					break
-				}
-				arg  := args[0]
-				type := types.op_result_type(arg.type, types.t_f32, false, {})
-				if type.kind == .Invalid {
-					error(checker, v, "builtin 'cos' expects one argument of type float or vector, got %v", arg.type)
-					return
-				}
-				operand.mode = .RValue
-				operand.type = type
-			case .Tan:
-				if len(v.args) != 1 {
-					error(checker, v, "builtin 'tan' expects one argument, got %d", len(args))
-					break
-				}
-				arg  := args[0]
-				type := types.op_result_type(arg.type, types.t_f32, false, {})
-				if type.kind == .Invalid {
-					error(checker, v, "builtin 'tan' expects one argument of type float or vector, got %v", arg.type)
-					return
-				}
-				operand.mode = .RValue
-				operand.type = type
+				v.args[0].value.type = type
+				operand.mode         = .RValue
+				operand.type         = type
 			case .Pow:
 				if len(v.args) != 2 {
 					error(checker, v, "builtin 'pow' expects two argument, got %d", len(args))

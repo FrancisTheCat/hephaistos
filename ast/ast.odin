@@ -114,6 +114,11 @@ Builtin_Id :: enum {
 	Cos,
 	Tan,
 	Normalize,
+	Exp,
+	Log,
+	Exp2,
+	Log2,
+	
 	Size_Of,
 	Align_Of,
 	Type_Of,
