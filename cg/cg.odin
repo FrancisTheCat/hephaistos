@@ -59,6 +59,8 @@ CG_Context :: struct {
 	image_types:        map[CG_Image_Type][2]spv.Id,
 
 	meta:               spv.Builder,
+	extensions:         spv.Builder,
+	ext_inst:           spv.Builder,
 	memory_model:       spv.Builder,
 	entry_points:       spv.Builder,
 	execution_modes:    spv.Builder,
@@ -81,6 +83,8 @@ CG_Context :: struct {
 	debug_file_id:      spv.Id,
 
 	local_size:         [3]i32,
+
+	spirv_version:      u32,
 }
 
 CG_Entity :: struct {
@@ -331,13 +335,15 @@ generate :: proc(
 	stmts:       []^ast.Stmt,
 	file_name:   Maybe(string) = nil,
 	file_source: Maybe(string) = nil,
-	allocator := context.allocator,
+	spirv_version := u32(spv.VERSION),
+	allocator     := context.allocator,
 ) -> []u32 {
 	context.allocator = context.temp_allocator
 
 	ctx: CG_Context = {
 		checker       = checker,
 		type_registry = make(Type_Registry, 1024),
+		spirv_version = spirv_version,
 	}
 
 	for b := cast([^]spv.Builder)&ctx.meta; b != cast([^]spv.Builder)&ctx.current_id; b = b[1:] {
@@ -345,7 +351,7 @@ generate :: proc(
 	}
 
 	append(&ctx.meta.data, spv.MAGIC_NUMBER)
-	append(&ctx.meta.data, spv.VERSION)
+	append(&ctx.meta.data, spirv_version)
 	append(&ctx.meta.data, 'H' << 0 | 'E' << 8 | 'P' << 16 | 'H' << 24)
 	append(&ctx.meta.data, 4194303)
 	append(&ctx.meta.data, 0)
@@ -367,7 +373,9 @@ generate :: proc(
 	spv.OpCapability(&ctx.meta, .Shader)
 	ctx.capabilities[.Shader] = {}
 
-	spv_glsl.extension_id = spv.OpExtInstImport(&ctx.memory_model, "GLSL.std.450")
+	spv.OpExtension(&ctx.extensions, "SPV_KHR_storage_buffer_storage_class")
+
+	spv_glsl.extension_id = spv.OpExtInstImport(&ctx.ext_inst, "GLSL.std.450")
 	spv.OpMemoryModel(&ctx.memory_model, .Logical, .Simple)
 
 	b: spv.Builder = { current_id = &ctx.current_id }
@@ -375,6 +383,8 @@ generate :: proc(
 
 	spirv := slice.concatenate([][]u32{
 		ctx.meta.data[:],
+		ctx.extensions.data[:],
+		ctx.ext_inst.data[:],
 		ctx.memory_model.data[:],
 		ctx.entry_points.data[:],
 		ctx.execution_modes.data[:],
@@ -1166,6 +1176,10 @@ cg_cast :: proc(
 	unreachable()
 }
 
+spv_version :: proc(major, minor: u32) -> u32 {
+	return (major << 16) | (minor << 8)
+}
+
 _cg_expr :: proc(
 	ctx:     ^CG_Context,
 	builder: ^spv.Builder,
@@ -1194,7 +1208,9 @@ _cg_expr :: proc(
 			value.explicit_layout = true
 			fallthrough
 		case .Global:
-			ctx.referenced_globals[value.id] = {}
+			if ctx.spirv_version > spv_version(1, 3) {
+				ctx.referenced_globals[value.id] = {}
+			}
 		}
 		return
 	case ^ast.Expr_Proc_Lit:

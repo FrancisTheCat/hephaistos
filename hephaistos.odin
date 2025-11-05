@@ -107,7 +107,7 @@ compile_shader :: proc(
 		return
 	}
 
-	code = cg_generate(&checker, stmts, path, source, allocator)
+	code = cg_generate(&checker, stmts, path, source, allocator = allocator)
 
 	return
 }
