@@ -118,6 +118,10 @@ Builtin_Id :: enum {
 	Log,
 	Exp2,
 	Log2,
+	Floor,
+	Fract,
+
+	Texture_Size,
 
 	Discard,
 

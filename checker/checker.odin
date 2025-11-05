@@ -45,34 +45,38 @@ addressing_mode_string := [Addressing_Mode]string {
 
 @(rodata)
 builtin_names: [ast.Builtin_Id]string = {
-	.Invalid     = "invalid",
-	.Dot         = "dot",
-	.Cross       = "cross",
-	.Min         = "min",
-	.Max         = "max",
-	.Clamp       = "clamp",
-	.Inverse     = "inverse",
-	.Transpose   = "transpose",
-	.Determinant = "determinant",
-	.Pow         = "pow",
-	.Sqrt        = "sqrt",
-	.Sin         = "sin",
-	.Cos         = "cos",
-	.Tan         = "tan",
-	.Normalize   = "normalize",
-	.Exp         = "exp",
-	.Log         = "log",
-	.Exp2        = "exp2",
-	.Log2        = "log2",
+	.Invalid      = "invalid",
+	.Dot          = "dot",
+	.Cross        = "cross",
+	.Min          = "min",
+	.Max          = "max",
+	.Clamp        = "clamp",
+	.Inverse      = "inverse",
+	.Transpose    = "transpose",
+	.Determinant  = "determinant",
+	.Pow          = "pow",
+	.Sqrt         = "sqrt",
+	.Sin          = "sin",
+	.Cos          = "cos",
+	.Tan          = "tan",
+	.Normalize    = "normalize",
+	.Exp          = "exp",
+	.Log          = "log",
+	.Exp2         = "exp2",
+	.Log2         = "log2",
+	.Fract        = "fract",
+	.Floor        = "floor",
 
-	.Discard     = "discard",
+	.Texture_Size = "texture_size",
 
-	.Ddx         = "ddx",
-	.Ddy         = "ddy",
+	.Discard      = "discard",
 
-	.Size_Of     = "size_of",
-	.Align_Of    = "align_of",
-	.Type_Of     = "type_of",
+	.Ddx          = "ddx",
+	.Ddy          = "ddy",
+
+	.Size_Of      = "size_of",
+	.Align_Of     = "align_of",
+	.Type_Of      = "type_of",
 }
 
 Operand :: struct {
@@ -707,33 +711,37 @@ checker_init :: proc(
 	scope_insert_entity(checker, entity_new(.Type, { text = "f32",  }, types.t_f32,  allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Type, { text = "f64",  }, types.t_f64,  allocator = allocator))
 
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "dot",         }, nil, builtin_id = .Dot,         allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "cross",       }, nil, builtin_id = .Cross,       allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "min",         }, nil, builtin_id = .Min,         allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "max",         }, nil, builtin_id = .Max,         allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "clamp",       }, nil, builtin_id = .Clamp,       allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "inverse",     }, nil, builtin_id = .Inverse,     allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "transpose",   }, nil, builtin_id = .Transpose,   allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "determinant", }, nil, builtin_id = .Determinant, allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "pow",         }, nil, builtin_id = .Pow,         allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "sqrt",        }, nil, builtin_id = .Sqrt,        allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "sin",         }, nil, builtin_id = .Sin,         allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "cos",         }, nil, builtin_id = .Cos,         allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "tan",         }, nil, builtin_id = .Tan,         allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "exp",         }, nil, builtin_id = .Exp,         allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "log",         }, nil, builtin_id = .Log,         allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "log2",        }, nil, builtin_id = .Log2,        allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "exp2",        }, nil, builtin_id = .Exp2,        allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "normalize",   }, nil, builtin_id = .Normalize,   allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "dot",          }, nil, builtin_id = .Dot,          allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "cross",        }, nil, builtin_id = .Cross,        allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "min",          }, nil, builtin_id = .Min,          allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "max",          }, nil, builtin_id = .Max,          allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "clamp",        }, nil, builtin_id = .Clamp,        allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "inverse",      }, nil, builtin_id = .Inverse,      allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "transpose",    }, nil, builtin_id = .Transpose,    allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "determinant",  }, nil, builtin_id = .Determinant,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "pow",          }, nil, builtin_id = .Pow,          allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "sqrt",         }, nil, builtin_id = .Sqrt,         allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "sin",          }, nil, builtin_id = .Sin,          allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "cos",          }, nil, builtin_id = .Cos,          allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "tan",          }, nil, builtin_id = .Tan,          allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "exp",          }, nil, builtin_id = .Exp,          allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "log",          }, nil, builtin_id = .Log,          allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "log2",         }, nil, builtin_id = .Log2,         allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "exp2",         }, nil, builtin_id = .Exp2,         allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "normalize",    }, nil, builtin_id = .Normalize,    allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "fract",        }, nil, builtin_id = .Fract,        allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "floor",        }, nil, builtin_id = .Floor,        allocator = allocator))
 
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "discard",     }, nil, builtin_id = .Discard,     allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "texture_size", }, nil, builtin_id = .Texture_Size, allocator = allocator))
 
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "ddx",         }, nil, builtin_id = .Ddx,         allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "ddy",         }, nil, builtin_id = .Ddy,         allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "discard",      }, nil, builtin_id = .Discard,      allocator = allocator))
 
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "size_of",     }, nil, builtin_id = .Size_Of,     allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "align_of",    }, nil, builtin_id = .Align_Of,    allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "type_of",     }, nil, builtin_id = .Type_Of,     allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "ddx",          }, nil, builtin_id = .Ddx,          allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "ddy",          }, nil, builtin_id = .Ddy,          allocator = allocator))
+
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "size_of",      }, nil, builtin_id = .Size_Of,      allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "align_of",     }, nil, builtin_id = .Align_Of,     allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "type_of",      }, nil, builtin_id = .Type_Of,      allocator = allocator))
 
 	checker.shared_types.allocator = allocator
 	for s in shared_types {
@@ -1591,7 +1599,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					break
 				}
 				fallthrough
-			case .Sqrt, .Sin, .Cos, .Tan, .Exp, .Exp2, .Log, .Log2:
+			case .Sqrt, .Sin, .Cos, .Tan, .Exp, .Exp2, .Log, .Log2, .Floor, .Fract:
 				if len(v.args) != 1 {
 					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(args))
 					break
@@ -1638,9 +1646,25 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				operand.mode = .RValue
 				operand.type = v.type
 			case .Discard:
+				if len(v.args) != 0 {
+					error(checker, v, "builtin 'discard' expects no arguments, got %d", len(v.args))
+					return
+				}
 				operand.type    = types.t_invalid
 				operand.mode    = .NoValue
 				operand.is_call = true
+			case .Texture_Size:
+				if len(v.args) != 1 {
+					error(checker, v, "builtin 'texture_size' expects one argument, got %d", len(v.args))
+					return
+				}
+				if args[0].type.kind != .Sampler {
+					error(checker, v, "builtin 'texture_size' expects a sampler, got %v", args[0].type)
+					return
+				}
+				sampler     := args[0].type.variant.(^types.Sampler)
+				operand.type = types.vector_new(types.t_i32, sampler.dimensions, checker.allocator)
+				operand.mode = .RValue
 			}
 			
 		case .Type:

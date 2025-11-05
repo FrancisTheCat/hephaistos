@@ -52,6 +52,7 @@ main :: proc() {
 
 	Vertex_Shader_Uniforms :: struct {
 		view, proj, model: glm.mat4,
+		normal_matrix:     glm.vec3,
 	}
 
 	Shadow_Uniforms :: struct {

@@ -452,6 +452,10 @@ castable :: proc(from, to: ^Type) -> bool {
 		return true
 	}
 
+	if is_vector(from) && is_vector(to) {
+		return vector_len(from) == vector_len(to)
+	}
+
 	return false
 }
 

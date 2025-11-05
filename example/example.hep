@@ -1,5 +1,14 @@
+SHADOW_PASS :: #config(SHADOW_PASS, false)
+
+// /* VERTEX SHADER */
+
 @(push_constant)
-vs_constants: #import(Vertex_Shader_Uniforms)
+vs_constants: #import(Vertex_Shader_Uniforms) // imported from Odin
+
+when !SHADOW_PASS {
+	@(uniform, binding = 0)
+	shadow_uniforms: #import(Shadow_Uniforms) // imported from Odin
+}
 
 @(vertex_shader, link_name = "main")
 vertex_main :: proc(
@@ -7,13 +16,19 @@ vertex_main :: proc(
 	a_normal:     [3]f32 @ 1,
 	a_tex_coords: [2]f32 @ 2,
 ) -> (
-	v_position:   [3]f32 @ 0,
-	v_normal:     [3]f32 @ 1,
-	v_tex_coords: [2]f32 @ 2,
+	v_position:        [3]f32 @ 0,
+	v_normal:          [3]f32 @ 1,
+	v_tex_coords:      [2]f32 @ 2,
+	v_shadow_position: [3]f32 @ 3,
 ) {
 	v_position   = (vs_constants.model * [4]f32{a_position, 1}).xyz
-	v_normal     = a_normal
+	v_normal     = vs_constants.normal_matrix * a_normal
 	v_tex_coords = a_tex_coords
+
+	when !SHADOW_PASS {
+		shadow_position  := shadow_uniforms.shadow_matrix * [4]f32{v_position, 1}
+		v_shadow_position = (shadow_position.xyz / shadow_position.w) * 0.5 + 0.5
+	}
 
 	$Position = vs_constants.proj * vs_constants.view * [4]f32{v_position, 1}
 	return
@@ -21,90 +36,79 @@ vertex_main :: proc(
 
 /* FRAGMENT SHADER */
 
-@(binding = 1)
-texture: sampler[2][3]f32
-@(binding = 2)
-depth_texture: sampler[2]f32
+when SHADOW_PASS {
+	@(fragment_shader, link_name = "main")
+	fragment_main :: proc(
+		v_position:        [3]f32 @ 0,
+		v_normal:          [3]f32 @ 1,
+		v_tex_coords:      [2]f32 @ 2,
+		v_shadow_position: [3]f32 @ 3,
+	) {
+		
+	}
+} else {
+	@(binding = 1) texture:       sampler[2][3]f32
+	@(binding = 2) depth_texture: sampler[2]f32
 
-SHADOW_PASS :: #config(SHADOW_PASS, false)
+	shadow_sample_bilinear :: proc(tex: sampler[2]f32, coords: [2]f32, current_depth: f32, bias: f32) -> f32 {
+		tex_size := texture_size(tex)
 
-when !SHADOW_PASS {
-	@(uniform, binding = 0)
-	shadow_uniforms: #import(Shadow_Uniforms)
-}
+		inv_tex_size := 1 / ([2]f32)(tex_size)
 
-@(fragment_shader, link_name = "main")
-fragment_main :: proc(
-	v_position:   [3]f32 @ 0,
-	v_normal:     [3]f32 @ 1,
-	v_tex_coords: [2]f32 @ 2,
-) -> (
-	f_color: [3]f32 @ 0,
-) {
-	when !SHADOW_PASS {
-		v_normal         := normalize(v_normal)
+	    texel_pos := coords * ([2]f32)(tex_size)
+	    base      := floor(texel_pos)
+	    f         := fract(texel_pos)
 
-	    _shadow_position := shadow_uniforms.shadow_matrix * [4]f32{v_position, 1}
-	    shadow_position  := (_shadow_position.xyz / _shadow_position.w) * 0.5 + 0.5
-	    depth            := shadow_position.z
-	    dx               := ddx(depth)
-	    dy               := ddy(depth)
-	    bias             := 0.001
-	    shadow           := 0
-	    if shadow_position.x >= 0 && shadow_position.x <= 1 && shadow_position.y >= 0 && shadow_position.y <= 1 {
-	    	d := depth_texture[shadow_position.xy] * 0.5 + 0.5
+	    base_uv := base * inv_tex_size
+    
+	    uv00 := base_uv
+	    uv10 := base_uv + [2]f32{ inv_tex_size.x, 0.0, }
+	    uv01 := base_uv + [2]f32{ 0.0, inv_tex_size.y, }
+	    uv11 := base_uv + inv_tex_size
+
+	    w00 := (1.0 - f.x) * (1.0 - f.y)
+	    w10 := f.x         * (1.0 - f.y)
+	    w01 := (1.0 - f.x) * f.y
+	    w11 := f.x         * f.y
+
+	    shadow := 0.0
+
+	    d00 := tex[uv00] * 0.5 + 0.5
+	    d10 := tex[uv10] * 0.5 + 0.5
+	    d01 := tex[uv01] * 0.5 + 0.5
+	    d11 := tex[uv11] * 0.5 + 0.5
+
+	    // shadow += ((current_depth - bias) > d00 ? 1.0 : 0.0) * w00
+	    // shadow += ((current_depth - bias) > d10 ? 1.0 : 0.0) * w10
+	    // shadow += ((current_depth - bias) > d01 ? 1.0 : 0.0) * w01
+	    // shadow += ((current_depth - bias) > d11 ? 1.0 : 0.0) * w11
+
+	    return shadow
+	}
+
+	@(fragment_shader, link_name = "main")
+	fragment_main :: proc(
+		v_position:        [3]f32 @ 0,
+		v_normal:          [3]f32 @ 1,
+		v_tex_coords:      [2]f32 @ 2,
+		v_shadow_position: [3]f32 @ 3,
+	) -> (
+		f_color: [3]f32 @ 0,
+	) {
+		v_normal := normalize(v_normal)
+
+	    depth  := v_shadow_position.z
+	    bias   := 0.001
+	    shadow := 0
+	    if v_shadow_position.x >= 0 && v_shadow_position.x <= 1 && v_shadow_position.y >= 0 && v_shadow_position.y <= 1 {
+	    	d := depth_texture[v_shadow_position.xy] * 0.5 + 0.5
 	    	if (depth - bias > d) {
 	    		shadow = 1
 	    	}
-	    } else {
-	    	discard()
 	    }
 
-		e := #import(Some_Enum).A
-		switch e {
-		case .A:
-		case .B:
-		case .C:
-		}
-
-		v: [3]i32
-		x := cross(v, v)
-
-		lighting := max(dot(v_normal, shadow_uniforms.light_direction), 0)
-		f_color   = lighting * f32(1 - shadow) * texture[v_tex_coords]
+		lighting := clamp(dot(v_normal, shadow_uniforms.light_direction), 0, 1)
+		f_color   = (0.2 + 0.8 * lighting * f32(1 - shadow)) * texture[v_tex_coords]
 		return
-	}
-}
-
-@(fragment_shader)
-shadow_main :: proc(
-	v_position:   [3]f32 @ 0,
-	v_normal:     [3]f32 @ 1,
-	v_tex_coords: [2]f32 @ 2,
-) {
-	
-}
-
-/* COMPUTE SHADER */
-
-Particle :: #import(Particle)
-
-@(push_constant)
-compute_constants: struct {
-	delta_time: f32,
-}
-
-@(readonly)
-particles_in:  []Particle
-particles_out: []Particle
-
-@(compute_shader, local_size = {256, 1, 1})
-simulate_particles :: proc() {
-	index               := $GlobalInvocationId.x
-	particle_in         := particles_in[index]
-	particles_out[index] = {
-		position = particle_in.position + particle_in.velocity * compute_constants.delta_time,
-		velocity = particle_in.velocity,
-		color    = particle_in.color,
 	}
 }
