@@ -1620,6 +1620,11 @@ _cg_expr :: proc(
 		case .Add:
 			return e
 		}
+	case ^ast.Expr_Ternary:
+		cond       := cg_expr(ctx, builder, v.cond).id
+		then_value := cg_expr(ctx, builder, v.then_expr).id
+		else_value := cg_expr(ctx, builder, v.else_expr).id
+		return { id = spv.OpSelect(builder, cg_type(ctx, v.type).type, cond, then_value, else_value), }
 	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Import, ^ast.Type_Sampler, ^ast.Type_Enum:
 		panic("tried to cg type as expression")
 	case ^ast.Expr_Config:
@@ -1904,40 +1909,63 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 	case ^ast.Stmt_Assign:
 		lhs_i := 0
 		for value in v.rhs {
-			lhs := cg_expr(ctx, builder, v.lhs[lhs_i], deref = false)
-			rhs := cg_expr(ctx, builder, value)
-			if lhs.explicit_layout {
-				type := lhs.type.variant.(^types.Struct)
-				// TODO: handle members that are structs
-				for f, i in type.fields {
-					field_ti  := cg_type(ctx, f.type, { .Explicit_Layout, })
-					val       := spv.OpCompositeExtract(builder, field_ti.type, rhs.id, u32(i))
-					field_ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, field_ti, lhs.storage_class), lhs.id, cg_constant(ctx, i64(i)).id)
-					spv.OpStore(builder, field_ptr, val)
-					// append(&members, spv.OpLoad(builder, field_ti.type, field_ptr))
-				}
-				continue
-			}
-			if len(lhs.swizzle) != 0 {
-				unimplemented()
-			}
-			if v.op == nil {
-				rhs.id = cg_cast(ctx, builder, rhs, lhs.type)
-				spv.OpStore(builder, lhs.id, rhs.id)
-				continue
-			}
+			values := []CG_Value{ cg_expr(ctx, builder, value), }
+			deconstruct_tuple: if value.type.kind == .Tuple {
+				type := value.type.variant.(^types.Struct)
+				v    := values[0]
 
-			t: ^types.Type
-			lhs_ti := cg_type(ctx, v.lhs[lhs_i].type)
-			value  := cg_expr_binary(
-				ctx,
-				builder,
-				v.op,
-				{ id = spv.OpLoad(builder, lhs_ti.type, lhs.id), type = lhs.type, },
-				rhs,
-				&t,
-			)
-			spv.OpStore(builder, lhs.id, value)
+				if len(type.fields) == 1 {
+					values[0] = {
+						type = type.fields[0].type,
+						id   = v.id,
+					}
+					break deconstruct_tuple
+				}
+
+				values = make([]CG_Value, len(type.fields), context.temp_allocator)
+				for &val, i in values {
+					ti := cg_type(ctx, type.fields[i].type)
+					val = {
+						type = type.fields[i].type,
+						id   = spv.OpCompositeExtract(builder, ti.type, v.id, u32(i)),
+					}
+				}
+			}
+			for rhs in values {
+				lhs := cg_expr(ctx, builder, v.lhs[lhs_i], deref = false)
+				if lhs.explicit_layout {
+					type := lhs.type.variant.(^types.Struct)
+					// TODO: handle members that are structs
+					for f, i in type.fields {
+						field_ti  := cg_type(ctx, f.type, { .Explicit_Layout, })
+						val       := spv.OpCompositeExtract(builder, field_ti.type, rhs.id, u32(i))
+						field_ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, field_ti, lhs.storage_class), lhs.id, cg_constant(ctx, i64(i)).id)
+						spv.OpStore(builder, field_ptr, val)
+						// append(&members, spv.OpLoad(builder, field_ti.type, field_ptr))
+					}
+					continue
+				}
+				if len(lhs.swizzle) != 0 {
+					unimplemented()
+				}
+				if v.op == nil {
+					spv.OpStore(builder, lhs.id, cg_cast(ctx, builder, rhs, lhs.type))
+					continue
+				}
+
+				t: ^types.Type
+				lhs_ti := cg_type(ctx, v.lhs[lhs_i].type)
+				value  := cg_expr_binary(
+					ctx,
+					builder,
+					v.op,
+					{ id = spv.OpLoad(builder, lhs_ti.type, lhs.id), type = lhs.type, },
+					rhs,
+					&t,
+				)
+				spv.OpStore(builder, lhs.id, value)
+				lhs_i += 1
+			}
 		}
 	case ^ast.Stmt_Expr:
 		e := cg_expr(ctx, builder, v.expr)

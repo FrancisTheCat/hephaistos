@@ -44,6 +44,13 @@ Expr_Unary :: struct {
 	expr:      ^Expr,
 }
 
+Expr_Ternary :: struct {
+	using node: Expr,
+	cond:      ^Expr,
+	then_expr: ^Expr,
+	else_expr: ^Expr,
+}
+
 Expr_Constant :: struct {
 	using node: Expr,
 	value:      types.Const_Value,
@@ -324,6 +331,7 @@ Any_Node :: union {
 	^Expr_Unary,
 	^Expr_Interface,
 	^Expr_Config,
+	^Expr_Ternary,
 
 	^Type_Import,
 	^Type_Struct,
@@ -362,6 +370,7 @@ Any_Expr :: union {
 	^Expr_Unary,
 	^Expr_Interface,
 	^Expr_Config,
+	^Expr_Ternary,
 	
 	^Type_Import,
 	^Type_Struct,

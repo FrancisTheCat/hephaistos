@@ -1690,22 +1690,27 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 
 			arg_index := 0
 			for e in v.args {
-				value := check_expr(checker, e.value)
+				value := check_expr(checker, e.value, type_hint = proc_type.args[arg_index].type)
 				if arg_index >= len(proc_type.args) {
 					continue
 				}
 
 				if value.type.kind == .Tuple {
 					for field_type in value.type.variant.(^types.Struct).fields {
+						if arg_index >= len(proc_type.args) {
+							break
+						}
 						if !types.implicitly_castable(field_type.type, proc_type.args[arg_index].type) {
 							error(checker, value, "mismatched type in at argument %d: %v vs %v", arg_index, proc_type.args[arg_index].type, value.type)
 						}
+						e.value.type = proc_type.args[arg_index].type
 						arg_index += 1
 					}
 				} else {
 					if !types.implicitly_castable(value.type, proc_type.args[arg_index].type) {
 						error(checker, value, "mismatched type in at argument %d: %v vs %v", arg_index, proc_type.args[arg_index].type, value.type)
 					}
+					e.value.type = proc_type.args[arg_index].type
 					arg_index += 1
 				}
 			}
@@ -1952,6 +1957,23 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				unreachable()
 			}
 		}
+	case ^ast.Expr_Ternary:
+		cond       := check_expr(checker, v.cond)
+		then_value := check_expr(checker, v.then_expr)
+		else_value := check_expr(checker, v.else_expr)
+
+		if cond.type.kind != .Bool {
+			error(checker, cond, "expected a boolean as the condition in ternary, got %v", cond.type)
+			return
+		}
+
+		operand.type = types.default_type(types.op_result_type(then_value.type, else_value.type, false, checker.allocator))
+		if operand.type.kind == .Invalid {
+			error(checker, cond, "mismatched types in ternary expr: %v vs %v", then_value.type, else_value.type)
+			return
+		}
+		v.then_expr.type = operand.type
+		v.else_expr.type = operand.type
 
 	case ^ast.Type_Matrix:
 		rows := check_expr(checker, v.rows)

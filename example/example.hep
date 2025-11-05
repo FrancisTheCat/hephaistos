@@ -78,10 +78,10 @@ when SHADOW_PASS {
 	    d01 := tex[uv01] * 0.5 + 0.5
 	    d11 := tex[uv11] * 0.5 + 0.5
 
-	    // shadow += ((current_depth - bias) > d00 ? 1.0 : 0.0) * w00
-	    // shadow += ((current_depth - bias) > d10 ? 1.0 : 0.0) * w10
-	    // shadow += ((current_depth - bias) > d01 ? 1.0 : 0.0) * w01
-	    // shadow += ((current_depth - bias) > d11 ? 1.0 : 0.0) * w11
+	    shadow += ((current_depth - bias) > d00 ? 1 : 0) * w00
+	    shadow += ((current_depth - bias) > d10 ? 1 : 0) * w10
+	    shadow += ((current_depth - bias) > d01 ? 1 : 0) * w01
+	    shadow += ((current_depth - bias) > d11 ? 1 : 0) * w11
 
 	    return shadow
 	}
@@ -97,13 +97,16 @@ when SHADOW_PASS {
 	) {
 		v_normal := normalize(v_normal)
 
-	    depth  := v_shadow_position.z
-	    bias   := 0.001
-	    shadow := 0
+	    BIAS :: 0.001
+	    shadow: f32
 	    if v_shadow_position.x >= 0 && v_shadow_position.x <= 1 && v_shadow_position.y >= 0 && v_shadow_position.y <= 1 {
-	    	d := depth_texture[v_shadow_position.xy] * 0.5 + 0.5
-	    	if (depth - bias > d) {
-	    		shadow = 1
+	    	when false {
+		    	d := depth_texture[v_shadow_position.xy] * 0.5 + 0.5
+		    	if (v_shadow_position.z - BIAS > d) {
+		    		shadow = 1
+		    	}
+	    	} else {
+		    	shadow = shadow_sample_bilinear(depth_texture, v_shadow_position.xy, v_shadow_position.z, BIAS)
 	    	}
 	    }
 

@@ -437,6 +437,9 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 }
 
 binding_powers: #sparse [tokenizer.Token_Kind]int = #partial {
+	.Question_Mark = 2,
+	.If            = 2,
+
 	.And           = 3,
 	.Or            = 3,
 
@@ -496,6 +499,33 @@ parse_expr :: proc(parser: ^Parser, min_power := 0, allow_compound_literals := t
 		if power == 0 || power <= min_power {
 			break
 		}
+
+		#partial switch op.kind {
+		case .Question_Mark:
+			token_advance(parser)
+			then_expr := parse_expr(parser) or_return
+			token_expect(parser, .Colon, "ternary then expression") or_return
+			else_expr  := parse_expr(parser) or_return
+			t          := ast.new(ast.Expr_Ternary, lhs.start, parser.end_location, parser.allocator)
+			t.cond      = lhs
+			t.then_expr = then_expr
+			t.else_expr = else_expr
+			lhs         = t
+			continue
+
+		case .If:
+			token_advance(parser)
+			cond := parse_expr(parser) or_return
+			token_expect(parser, .Else, "ternary condition") or_return
+			else_expr  := parse_expr(parser) or_return
+			t          := ast.new(ast.Expr_Ternary, lhs.start, parser.end_location, parser.allocator)
+			t.cond      = cond
+			t.then_expr = lhs
+			t.else_expr = else_expr
+			lhs         = t
+			continue
+		}
+
 		token_advance(parser)
 		rhs := parse_expr(parser, power) or_return
 		e   := ast.new(ast.Expr_Binary, lhs.start, parser.end_location, parser.allocator)
