@@ -99,6 +99,7 @@ CG_Value :: struct {
 	real_type:       ^types.Type, // non swizzled type
 	swizzle:         []u32,
 	explicit_layout: bool,
+	discard:         bool,
 }
 
 CG_Scope :: struct {
@@ -1402,6 +1403,9 @@ _cg_expr :: proc(
 				return { id = spv.OpDPdx(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Ddy:
 				return { id = spv.OpDPdy(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Discard:
+				spv.OpKill(builder)
+				return { discard = true, }
 			}
 		case v.is_cast:
 			return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type), }
@@ -1886,7 +1890,10 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 			spv.OpStore(builder, lhs.id, value)
 		}
 	case ^ast.Stmt_Expr:
-		_ = cg_expr(ctx, builder, v.expr)
+		e := cg_expr(ctx, builder, v.expr)
+		if e.discard {
+			return true
+		}
 
 	case ^ast.Decl_Value:
 		if v.mutable && ctx.debug_file_id != 0 && !global {

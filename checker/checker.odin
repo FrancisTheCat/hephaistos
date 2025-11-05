@@ -25,6 +25,7 @@ Checker :: struct {
 Addressing_Mode :: enum {
 	Invalid = 0,
 	RValue,
+	NoValue,
 	LValue,
 	Const,
 	Type,
@@ -34,6 +35,7 @@ Addressing_Mode :: enum {
 @(rodata)
 addressing_mode_string := [Addressing_Mode]string {
 	.Invalid  = "<invalid>",
+	.NoValue  = "no value",
 	.RValue   = "rvalue",
 	.LValue   = "lvalue",
 	.Const    = "const",
@@ -62,6 +64,8 @@ builtin_names: [ast.Builtin_Id]string = {
 	.Log         = "log",
 	.Exp2        = "exp2",
 	.Log2        = "log2",
+
+	.Discard     = "discard",
 
 	.Ddx         = "ddx",
 	.Ddy         = "ddy",
@@ -437,9 +441,12 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		}
 		
 	case ^ast.Stmt_Expr:
-		operand := check_expr(checker, v.expr)
+		operand := check_expr(checker, v.expr, allow_no_value = true)
 		if !operand.is_call {
 			error(checker, v.expr, "expression is not used")
+		}
+		if operand.builtin_id == .Discard {
+			return true
 		}
 
 	case ^ast.Decl_Value:
@@ -718,6 +725,8 @@ checker_init :: proc(
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "log2",        }, nil, builtin_id = .Log2,        allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "exp2",        }, nil, builtin_id = .Exp2,        allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "normalize",   }, nil, builtin_id = .Normalize,   allocator = allocator))
+
+	scope_insert_entity(checker, entity_new(.Builtin, { text = "discard",     }, nil, builtin_id = .Discard,     allocator = allocator))
 
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "ddx",         }, nil, builtin_id = .Ddx,         allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Builtin, { text = "ddy",         }, nil, builtin_id = .Ddy,         allocator = allocator))
@@ -1409,7 +1418,8 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		case .Invalid:
 			return
 		case .Builtin:
-			v.builtin = fn.builtin_id
+			v.builtin          = fn.builtin_id
+			operand.builtin_id = fn.builtin_id
 
 			allow_types := false
 			#partial switch v.builtin {
@@ -1627,6 +1637,10 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				operand.mode = .RValue
 				operand.type = v.type
+			case .Discard:
+				operand.type    = types.t_invalid
+				operand.mode    = .NoValue
+				operand.is_call = true
 			}
 			
 		case .Type:
@@ -2088,6 +2102,8 @@ check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast
 		return
 	case .Builtin:
 		error(checker, operand, "expected an expression, got builtin")
+	case .NoValue:
+		error(checker, operand, "expected an expression, got no value")
 	case .Invalid:
 	}
 
@@ -2097,7 +2113,7 @@ check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast
 	return
 }
 
-check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}, type_hint: ^types.Type = nil) -> (operand: Operand) {
+check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}, type_hint: ^types.Type = nil, allow_no_value := false) -> (operand: Operand) {
 	operand = check_expr_internal(checker, expr, attributes, type_hint)
 	switch operand.mode {
 	case .RValue, .LValue, .Const:
@@ -2106,6 +2122,11 @@ check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 		error(checker, operand, "expected an expression, got builtin")
 	case .Type:
 		error(checker, operand, "expected an expression, got type")
+	case .NoValue:
+		if allow_no_value {
+			return
+		}
+		error(checker, operand, "expected an expression, got no value")
 	case .Invalid:
 	}
 
@@ -2123,6 +2144,8 @@ check_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 		error(checker, operand, "expected a type, got builtin")
 	case .Type:
 		return operand.type
+	case .NoValue:
+		error(checker, operand, "expected an expression, got no value")
 	case .Invalid:
 	}
 

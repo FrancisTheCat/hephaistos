@@ -119,6 +119,8 @@ Builtin_Id :: enum {
 	Exp2,
 	Log2,
 
+	Discard,
+
 	Ddx,
 	Ddy,
 	
