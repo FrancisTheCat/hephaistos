@@ -42,6 +42,8 @@ fragment_main :: proc(
 	f_color: [3]f32 @ 0,
 ) {
 	when !SHADOW_PASS {
+		v_normal         := normalize(v_normal)
+
 	    _shadow_position := shadow_uniforms.shadow_matrix * [4]f32{v_position, 1}
 	    shadow_position  := (_shadow_position.xyz / _shadow_position.w) * 0.5 + 0.5
 	    depth            := shadow_position.z

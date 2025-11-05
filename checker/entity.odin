@@ -13,7 +13,6 @@ Entity_Kind :: enum u32 {
 	Type,
 	Var,
 	Proc,
-	Param,
 	Builtin,
 }
 
@@ -22,11 +21,16 @@ entity_kind_string := [Entity_Kind]string{
 	.Invalid = "invalid",
 	.Const   = "const",
 	.Type    = "type",
-	.Var     = "var",
+	.Var     = "variable",
 	.Proc    = "proc",
-	.Param   = "param",
 	.Builtin = "builtin",
 }
+
+Entity_Flag :: enum {
+	Readonly,
+}
+
+Entity_Flags :: bit_set[Entity_Flag]
 
 Entity :: struct {
 	kind:       Entity_Kind,
@@ -36,6 +40,7 @@ Entity :: struct {
 	decl:       ^ast.Decl,
 	value:      types.Const_Value,
 	builtin_id: ast.Builtin_Id,
+	flags:      Entity_Flags,
 }
 
 @(require_results)
@@ -46,6 +51,7 @@ entity_new :: proc(
 	value:      types.Const_Value = nil,
 	decl:       ^ast.Decl         = nil,
 	builtin_id: ast.Builtin_Id    = nil,
+	flags:      Entity_Flags      = {},
 	allocator:  mem.Allocator,
 ) -> ^Entity {
 	e := new(Entity, allocator)
@@ -56,5 +62,6 @@ entity_new :: proc(
 	e.value      = value
 	e.decl       = decl
 	e.builtin_id = builtin_id
+	e.flags      = flags
 	return e
 }

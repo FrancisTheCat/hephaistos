@@ -278,7 +278,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			error(checker, v.end, "mismatched types in range stmt: %v vs %v", start.type, end.type)
 		}
 		if var, ok := v.variable.derived_expr.(^ast.Expr_Ident); ok {
-			e := entity_new(.Param, var.ident, iter_type, allocator = checker.allocator)
+			e := entity_new(.Var, var.ident, iter_type, flags = { .Readonly, }, allocator = checker.allocator)
 			scope_insert_entity(checker, e)
 			v.variable.type = iter_type
 		} else {
@@ -393,7 +393,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 		for &l in lhs {
 			if l.mode != .LValue {
-				error(checker, v, "cannot assign to %s expression", addressing_mode_string[l.mode])
+				error(checker, l, "cannot assign to %s expression", addressing_mode_string[l.mode])
 			}
 		}
 
@@ -566,10 +566,14 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 		v.types = make([]^types.Type, len(v.lhs), checker.allocator)
 
+		flags: Entity_Flags
+		if v.readonly {
+			flags += { .Readonly, }
+		}
 		if len(values) == 0 {
 			for name in names {
 				entity_kind := Entity_Kind.Var
-				scope_insert_entity(checker, entity_new(entity_kind, name, explicit_type, decl = v, allocator = checker.allocator))
+				scope_insert_entity(checker, entity_new(entity_kind, name, explicit_type, decl = v, flags = flags, allocator = checker.allocator))
 			}
 			for &t in v.types {
 				t = explicit_type
@@ -1216,12 +1220,13 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			operand.mode = .Type
 		case .Var:
 			operand.mode = .LValue
-		case .Param:
-			operand.mode = .RValue
 		case .Builtin:
 			operand.mode       = .Builtin
 			operand.builtin_id = e.builtin_id
-		case .Proc:
+		}
+
+		if .Readonly in e.flags {
+			operand.mode = .RValue
 		}
 
 	case ^ast.Expr_Interface:
@@ -1283,7 +1288,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 
 		for arg in type.args {
 			if arg.name.text != "" {
-				scope_insert_entity(checker, entity_new(.Param, arg.name, arg.type, allocator = checker.allocator))
+				scope_insert_entity(checker, entity_new(.Var, arg.name, arg.type, flags = { .Readonly, }, allocator = checker.allocator))
 			}
 		}
 
