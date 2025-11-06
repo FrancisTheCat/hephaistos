@@ -50,12 +50,11 @@ when SHADOW_PASS {
 	@(binding = 1) texture:       sampler[2][3]f32
 	@(binding = 2) depth_texture: sampler[2]f32
 
-	shadow_sample_bilinear :: proc(tex: sampler[2]f32, coords: [2]f32, current_depth: f32, bias: f32) -> f32 {
-		tex_size := texture_size(tex)
+	shadow_sample_bilinear :: proc(tex: sampler[2]f32, coords: [2]f32, current_depth, bias: f32) -> f32 {
+		tex_size     := ([2]f32)(texture_size(tex))
+		inv_tex_size := 1 / tex_size
 
-		inv_tex_size := 1 / ([2]f32)(tex_size)
-
-	    texel_pos := coords * ([2]f32)(tex_size)
+	    texel_pos := coords * tex_size
 	    base      := floor(texel_pos)
 	    f         := fract(texel_pos)
 

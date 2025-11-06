@@ -1066,11 +1066,74 @@ check_proc_type :: proc(checker: ^Checker, p: $T) -> ^types.Proc {
 		reserve(&out_fields, len(fields))
 
 		locations          := make(map[int]tokenizer.Token, context.temp_allocator)
+		names_seen         := make(map[string]struct{},     context.temp_allocator)
 		explicit_locations := false
 
-		for field, i in fields {
-			type := check_type(checker, field.type)
-			if field.value != nil {
+		for i := 0; i < len(fields); {
+			start := i
+			type: ^types.Type
+			for i < len(fields) {
+				defer i += 1
+				field := fields[i]
+				if field.ident.text in names_seen {
+					error(checker, field.ident, "duplicate name: '%s'", field.ident.text)
+					return
+				}
+				names_seen[field.ident.text] = {}
+
+				location := i
+				if field.location != nil {
+					// TODO: matrices with mutliple locations
+
+					loc := check_expr(checker, field.location)
+					if l, ok := loc.value.(i64); ok && l != -1 {
+						if i == 0 {
+							explicit_locations = true
+						}
+
+						if !explicit_locations {
+							error(checker, field.location, "location specifiers have to be specified for either all or none of the %ss", usage)
+						}
+
+						location = int(l)
+
+						if prev, prev_found := locations[location]; prev_found {
+							error(checker, field.location, "duplicate location specifier: location %v is already used by '%s'", location, prev.text)
+						}
+						locations[location] = field.ident
+					} else {
+						error(checker, field.location, "location specifier has to be a constant integer")
+					}
+				} else {
+					if explicit_locations {
+						error(checker, field.ident, "location specifiers have to be specified for either all or none of the %ss", usage)
+					}
+				}
+
+				append(&out_fields, types.Field {
+					name     = field.ident,
+					type     = nil, // patched later
+					location = location,
+				})
+				
+				if field.type == nil {
+					if field.value != nil {
+						type = check_expr(checker, field.value).type
+						break
+					}
+					continue
+				}
+
+				type = check_type(checker, field.type)
+
+				if field.value == nil {
+					break
+				}
+
+				if i != start {
+					error(checker, field.value, "default values can only be applied to single values")
+				}
+
 				value := check_expr(checker, field.value)
 				if !types.implicitly_castable(value.type, type) {
 					error(
@@ -1082,43 +1145,12 @@ check_proc_type :: proc(checker: ^Checker, p: $T) -> ^types.Proc {
 						value.type,
 					)
 				}
+				break
 			}
 
-			location := i
-			if field.location != nil {
-				// TODO: matrices with mutliple locations
-
-				loc := check_expr(checker, field.location)
-				if l, ok := loc.value.(i64); ok && l != -1 {
-					if i == 0 {
-						explicit_locations = true
-					}
-
-					if !explicit_locations {
-						error(checker, field.location, "location specifier have to be specified for either all or none of the %ss", usage)
-					}
-
-					// TODO: check for duplicates
-					location = int(l)
-
-					if prev, prev_found := locations[location]; prev_found {
-						error(checker, field.location, "duplicate location specifier: location %v is already used by '%s'", location, prev.text)
-					}
-					locations[location] = field.ident
-				} else {
-					error(checker, field.location, "location specifier has to be a constant integer")
-				}
-			} else {
-				if explicit_locations {
-					error(checker, field.ident, "location specifier have to be specified for either all or none of the %ss", usage)
-				}
+			for i in start ..< i {
+				out_fields[i].type = type
 			}
-
-			append(&out_fields, types.Field {
-				name     = field.ident,
-				type     = type,
-				location = location,
-			})
 		}
 
 		return
@@ -2026,23 +2058,44 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		fields_seen := make(map[string]struct{}, context.temp_allocator)
 		offset      := 0
 		align       := 1
-		for field in v.fields {
-			if field.ident.text in fields_seen {
-				error(checker, field.ident, "duplicate field name: '%s'", field.ident.text)
+		for i := 0; i < len(v.fields); {
+			start := i
+			type: ^types.Type
+			for ; i < len(v.fields); i += 1 {
+				field := v.fields[i]
+				if field.ident.text in fields_seen {
+					error(checker, field.ident, "duplicate field name: '%s'", field.ident.text)
+					operand.mode = .Type
+					operand.type = types.t_invalid
+					return
+				}
+				fields_seen[field.ident.text] = {}
+				if field.type == nil {
+					continue
+				}
+				type = check_type(checker, field.type)
+				i   += 1
+				break
 			}
-			fields_seen[field.ident.text] = {}
 
-			type := check_type(checker, field.type)
+			if type == nil && i == len(v.fields) {
+				error(checker, v.fields[len(v.fields) - 1].ident, "struct field is missing a type")
+				operand.mode = .Type
+				operand.type = types.t_invalid
+				return
+			}
 
 			if type.align != 0 {
 				offset = mem.align_forward_int(offset, type.align)
 			}
 
-			append(&fields, types.Field {
-				name   = field.ident,
-				type   = type,
-				offset = offset,
-			})
+			for i in start ..< i {
+				append(&fields, types.Field {
+					name   = v.fields[i].ident,
+					type   = type,
+					offset = offset,
+				})
+			}
 
 			offset += type.size
 			align   = max(align, type.align)

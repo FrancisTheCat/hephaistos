@@ -84,10 +84,14 @@ parse_field_list :: proc(
 		ident := token_expect(parser, .Ident) or_return
 		type: ^ast.Expr
 		if types {
-			token_expect(parser, .Colon) or_return
+			if token_peek(parser).kind == .Colon {
+				token_advance(parser)
 
-			if token_peek(parser).kind != .Assign {
-				type = parse_expr(parser) or_return
+				if token_peek(parser).kind != .Assign {
+					type = parse_expr(parser) or_return
+				}
+			} else if token_peek(parser).kind == .Assign {
+				break
 			}
 		}
 
