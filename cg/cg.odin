@@ -890,142 +890,97 @@ cg_expr_binary :: proc(
 	type^      = types.op_result_type(lhs_type, rhs_type, op == .Multiply, context.temp_allocator)
 	type_info := cg_type(ctx, type^)
 
-	#partial switch type^.kind {
-	case .Int:
-		#partial switch op {
-		case .Add:
-			return spv.OpIAdd(builder, type_info.type, lhs, rhs)
-		case .Subtract:
-			return spv.OpISub(builder, type_info.type, lhs, rhs)
-		case .Multiply:
-			return spv.OpIMul(builder, type_info.type, lhs, rhs)
-		case .Divide:
-			return spv.OpSDiv(builder, type_info.type, lhs, rhs)
-		case .Modulo:
-			return spv.OpSMod(builder, type_info.type, lhs, rhs)
-		case .Bit_Or:
-			return spv.OpBitwiseOr(builder, type_info.type, lhs, rhs)
-		case .Bit_And:
-			return spv.OpBitwiseAnd(builder, type_info.type, lhs, rhs)
-		case .Xor:
-			return spv.OpBitwiseXor(builder, type_info.type, lhs, rhs)
-		}
-	case .Uint:
-		#partial switch op {
-		case .Add:
-			return spv.OpIAdd(builder, type_info.type, lhs, rhs)
-		case .Subtract:
-			return spv.OpISub(builder, type_info.type, lhs, rhs)
-		case .Multiply:
-			return spv.OpIMul(builder, type_info.type, lhs, rhs)
-		case .Divide:
-			return spv.OpUDiv(builder, type_info.type, lhs, rhs)
-		case .Modulo:
-			return spv.OpUMod(builder, type_info.type, lhs, rhs)
-		case .Bit_Or:
-			return spv.OpBitwiseOr(builder, type_info.type, lhs, rhs)
-		case .Bit_And:
-			return spv.OpBitwiseAnd(builder, type_info.type, lhs, rhs)
-		case .Xor:
-			return spv.OpBitwiseXor(builder, type_info.type, lhs, rhs)
-		}
-	case .Float:
-		#partial switch op {
-		case .Add:
-			return spv.OpFAdd(builder, type_info.type, lhs, rhs)
-		case .Subtract:
-			return spv.OpFSub(builder, type_info.type, lhs, rhs)
-		case .Multiply:
-			return spv.OpFMul(builder, type_info.type, lhs, rhs)
-		case .Divide:
-			return spv.OpFDiv(builder, type_info.type, lhs, rhs)
-		case .Modulo:
-			return spv.OpFMod(builder, type_info.type, lhs, rhs)
-		}
-	case .Bool:
-		#partial switch op {
-		case .And:
-			return spv.OpLogicalAnd(builder, type_info.type, lhs, rhs)
-		case .Or:
-			return spv.OpLogicalOr(builder, type_info.type, lhs, rhs)
-		}
-		unimplemented()
-	case .Matrix:
-		#partial switch op {
-		case .Multiply:
-			return spv.OpMatrixTimesMatrix(builder, type_info.type, lhs, rhs)
-		}
-		unimplemented()
-	case .Vector:
-		if lhs_type.kind == .Matrix || rhs_type.kind == .Matrix {
-			assert(op == .Multiply)
+	Binary_Op_Proc :: proc(builder: ^spv.Builder, result_type: spv.Id, operand_1, operand_2: spv.Id) -> (result: spv.Id)
 
-			if lhs_type.kind == .Matrix {
-				return spv.OpMatrixTimesVector(builder, type_info.type, lhs, rhs)
-			} else {
-				panic("")
-				// assert(rhs_type.kind == .Matrix)
-				// return spv.OpVectorTimesMatrix(builder, type_info.type, lhs, rhs)
-			}
-		}
-
-		if lhs_type.kind == .Vector && rhs_type.kind == .Vector {
+	binary_op_inst :: proc(lhs_type, rhs_type, type: ^types.Type, op: tokenizer.Token_Kind) -> Binary_Op_Proc {
+		#partial switch type.kind {
+		case .Int:
 			#partial switch op {
 			case .Add:
-				return spv.OpFAdd(builder, type_info.type, lhs, rhs)
+				return spv.OpIAdd
 			case .Subtract:
-				return spv.OpFSub(builder, type_info.type, lhs, rhs)
+				return spv.OpISub
 			case .Multiply:
-				return spv.OpFMul(builder, type_info.type, lhs, rhs)
+				return spv.OpIMul
 			case .Divide:
-				return spv.OpFDiv(builder, type_info.type, lhs, rhs)
+				return spv.OpSDiv
 			case .Modulo:
-				return spv.OpFMod(builder, type_info.type, lhs, rhs)
+				return spv.OpSMod
+			case .Bit_Or:
+				return spv.OpBitwiseOr
+			case .Bit_And:
+				return spv.OpBitwiseAnd
+			case .Xor:
+				return spv.OpBitwiseXor
 			}
-			panic("")
-		}
-
-		if op == .Multiply {
-			lhs := lhs
-			rhs := rhs
-			if rhs_type.kind == .Vector {
-				lhs, rhs = rhs, lhs
+		case .Uint:
+			#partial switch op {
+			case .Add:
+				return spv.OpIAdd
+			case .Subtract:
+				return spv.OpISub
+			case .Multiply:
+				return spv.OpIMul
+			case .Divide:
+				return spv.OpUDiv
+			case .Modulo:
+				return spv.OpUMod
+			case .Bit_Or:
+				return spv.OpBitwiseOr
+			case .Bit_And:
+				return spv.OpBitwiseAnd
+			case .Xor:
+				return spv.OpBitwiseXor
 			}
-			return spv.OpVectorTimesScalar(builder, type_info.type, lhs, rhs)
-		}
-
-		if lhs_type.kind == .Vector {
-			elements := make([]spv.Id, lhs_type.variant.(^types.Vector).count)
-			for &e in elements {
-				e = rhs
+		case .Float:
+			#partial switch op {
+			case .Add:
+				return spv.OpFAdd
+			case .Subtract:
+				return spv.OpFSub
+			case .Multiply:
+				return spv.OpFMul
+			case .Divide:
+				return spv.OpFDiv
+			case .Modulo:
+				return spv.OpFMod
 			}
-			rhs = spv.OpCompositeConstruct(builder, type_info.type, ..elements)
-		} else {
-			elements := make([]spv.Id, rhs_type.variant.(^types.Vector).count)
-			for &e in elements {
-				e = lhs
+		case .Bool:
+			#partial switch op {
+			case .And:
+				return spv.OpLogicalAnd
+			case .Or:
+				return spv.OpLogicalOr
 			}
-			lhs = spv.OpCompositeConstruct(builder, type_info.type, ..elements)
-		}
+			unimplemented()
+		case .Matrix:
+			#partial switch op {
+			case .Multiply:
+				return spv.OpMatrixTimesMatrix
+			}
+			unimplemented()
+		case .Vector:
+			if lhs_type.kind == .Matrix || rhs_type.kind == .Matrix {
+				assert(op == .Multiply)
 
-		#partial switch op {
-		case .Add:
-			return spv.OpFAdd(builder, type_info.type, lhs, rhs)
-		case .Subtract:
-			return spv.OpFSub(builder, type_info.type, lhs, rhs)
-		case .Multiply:
-			return spv.OpVectorTimesScalar(builder, type_info.type, lhs, rhs)
-		case .Divide:
-			return spv.OpFDiv(builder, type_info.type, lhs, rhs)
-		case .Modulo:
-			return spv.OpFMod(builder, type_info.type, lhs, rhs)
-		}
+				if lhs_type.kind == .Matrix {
+					return spv.OpMatrixTimesVector
+				} else {
+					panic("")
+					// assert(rhs_type.kind == .Matrix)
+					// return spv.OpVectorTimesMatrix(builder, type_info.type, lhs, rhs)
+				}
+			}
 
-	case:
-		panic("")
+			if lhs_type.kind == .Vector && rhs_type.kind == .Vector {
+				return binary_op_inst(types.vector_elem(lhs_type), types.vector_elem(rhs_type), types.vector_elem(type), op)
+			}
+		}
+		return nil
 	}
 
-	unimplemented()
+	op_fn := binary_op_inst(lhs_type, rhs_type, type^, op)
+	return op_fn(builder, type_info.type, lhs, rhs)
 }
 
 @(require_results)

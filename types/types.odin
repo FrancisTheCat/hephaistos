@@ -516,6 +516,11 @@ vector_len :: proc(type: ^Type) -> int {
 	return type.variant.(^Vector).count
 }
 
+@(require_results)
+vector_elem :: proc(type: ^Type) -> ^Type {
+	return type.variant.(^Vector).elem
+}
+
 @(private="file")
 to_bytes :: proc(v: $P/^$T) -> []byte {
 	return ([^]byte)(v)[:size_of(T)]
