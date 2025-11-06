@@ -652,8 +652,8 @@ vector_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Vector
 	type := new(.Vector, Vector, allocator)
 	type.elem  = elem
 	type.count = count
-	type.size  = count * elem.size
-	type.align = 16
+	type.align = elem.align * 2
+	type.size  = mem.align_forward_int(count * elem.size, type.align)
 
 	return type
 }
