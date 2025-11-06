@@ -1449,7 +1449,7 @@ _cg_expr :: proc(
 				image   := spv.OpImage(builder, cg_type(ctx, sampler.type).image_type, sampler.id)
 				lod: spv.Id
 				if len(v.args) == 1 {
-					lod = cg_constant(ctx, i64(1)).id
+					lod = cg_constant(ctx, i64(0)).id
 				} else {
 					lod = cg_expr(ctx, builder, v.args[1].value).id
 				}
