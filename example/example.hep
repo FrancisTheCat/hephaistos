@@ -70,13 +70,12 @@ when SHADOW_PASS {
 	    w01 := (1.0 - f.x) * f.y
 	    w11 := f.x         * f.y
 
-	    shadow := 0.0
-
 	    d00 := tex[uv00] * 0.5 + 0.5
 	    d10 := tex[uv10] * 0.5 + 0.5
 	    d01 := tex[uv01] * 0.5 + 0.5
 	    d11 := tex[uv11] * 0.5 + 0.5
 
+	    shadow := 0.0
 	    shadow += ((current_depth - bias) > d00 ? 1 : 0) * w00
 	    shadow += ((current_depth - bias) > d10 ? 1 : 0) * w10
 	    shadow += ((current_depth - bias) > d01 ? 1 : 0) * w01

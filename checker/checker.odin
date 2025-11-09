@@ -1546,14 +1546,14 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					arg.value.type = type
 				}
 				if !types.is_numeric(type) && !types.is_vector(type) {
-					error(checker, v, "builtin '%s' expects a list of vectors or scalars of the same type, got %v", builtin_names[v.builtin], type)
+					error(checker, v, "builtin '%s' expects at least two vectors or scalars of the same type, got %v", builtin_names[v.builtin], type)
 					break
 				}
 				operand.type = type
 				operand.mode = .RValue
 			case .Clamp:
 				if len(v.args) != 3 {
-					error(checker, v, "builtin 'clamp' expects at least three arguments, got %d", len(v.args))
+					error(checker, v, "builtin 'clamp' expects three arguments, got %d", len(v.args))
 					break
 				}
 				type := args[0].type
@@ -1566,7 +1566,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					}
 				}
 				if !types.is_numeric(type) && !types.is_vector(type) {
-					error(checker, v, "builtin 'clamp' expects a list of vectors or scalars of the same type, got %v", type)
+					error(checker, v, "builtin 'clamp' expects 3 vectors or scalars of the same type, got %v", type)
 					break
 				}
 				for arg in v.args {
@@ -1576,7 +1576,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				operand.mode = .RValue
 			case .Lerp, .Smooth_Step:
 				if len(v.args) != 3 {
-					error(checker, v, "builtin '%s' expects at least three arguments, got %d", builtin_names[v.builtin], len(v.args))
+					error(checker, v, "builtin '%s' expects three arguments, got %d", builtin_names[v.builtin], len(v.args))
 					break
 				}
 				a, b, t := args[0].type, args[1].type, args[2].type
@@ -1586,7 +1586,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					break
 				}
 				if !types.is_numeric(type) && !types.is_vector(type) {
-					error(checker, v, "builtin '%s' expects a two vectors or scalars of the same type, got %v", builtin_names[v.builtin], type)
+					error(checker, v, "builtin '%s' expects two vectors or scalars of the same type, got %v", builtin_names[v.builtin], type)
 					break
 				}
 				if !types.is_float(t) {
@@ -1606,7 +1606,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				type := args[0].type
 				if !types.is_matrix(type) {
-					error(checker, v, "builtin 'inverse' expects an argument of type matrix, got %d", len(args))
+					error(checker, v, "builtin 'inverse' expects a matrix, got %d", len(args))
 					break
 				}
 				if !types.matrix_is_square(type) {
@@ -1622,7 +1622,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				type := args[0].type
 				if !types.is_matrix(type) {
-					error(checker, v, "builtin 'transpose' expects an argument of type matrix, got %d", len(args))
+					error(checker, v, "builtin 'transpose' expects a matrix, got %d", len(args))
 					break
 				}
 				if !types.matrix_is_square(type) {
@@ -1638,7 +1638,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				type := args[0].type
 				if !types.is_matrix(type) {
-					error(checker, v, "builtin 'determinant' expects an argument of type matrix, got %v", type)
+					error(checker, v, "builtin 'determinant' expects a matrix, got %v", type)
 					break
 				}
 				if !types.matrix_is_square(type) {
@@ -1661,7 +1661,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				arg  := args[0]
 				type := types.op_result_type(arg.type, types.t_f32, false, {})
 				if type.kind == .Invalid || type.kind == .Matrix {
-					error(checker, v, "builtin '%s' expects one argument of type float or vector, got %v", builtin_names[v.builtin], arg.type)
+					error(checker, v, "builtin '%s' expects a float or vector, got %v", builtin_names[v.builtin], arg.type)
 					return
 				}
 				v.args[0].value.type = type
@@ -1687,7 +1687,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				operand.type         = type
 			case .Pow:
 				if len(v.args) != 2 {
-					error(checker, v, "builtin 'pow' expects two argument, got %d", len(args))
+					error(checker, v, "builtin 'pow' expects two arguments, got %d", len(args))
 					break
 				}
 				x         := args[0]
