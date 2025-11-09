@@ -1067,44 +1067,56 @@ cg_cast :: proc(
 
 	ti := cg_type(ctx, type)
 
-	if type.size == v_type.size && types.is_integer(v_type) && types.is_integer(type) {
-		return spv.OpBitcast(builder, ti.type, value.id)
+	Cast_Op_Proc :: proc(builder: ^spv.Builder, result_type: spv.Id, value: spv.Id) -> (result: spv.Id)
+	numeric_cast_op_inst :: proc(from, to: ^types.Type) -> Cast_Op_Proc {
+		if from.size == to.size && types.is_integer(from) && types.is_integer(to) {
+			return spv.OpBitcast
+		}
+
+		#partial switch to.kind {
+		case .Float:
+			#partial switch from.kind {
+			case .Float:
+				return spv.OpFConvert
+			case .Uint:
+				return spv.OpConvertUToF
+			case .Int:
+				return spv.OpConvertSToF
+			case:
+				unreachable()
+			}
+		case .Int:
+			#partial switch from.kind {
+			case .Float:
+				return spv.OpConvertFToS
+			case .Uint:
+				return spv.OpSConvert
+			case .Int:
+				return spv.OpSConvert
+			case:
+				unreachable()
+			}
+		case .Uint:
+			#partial switch from.kind {
+			case .Float:
+				return spv.OpConvertFToU
+			case .Uint:
+				return spv.OpUConvert
+			case .Int:
+				return spv.OpSConvert
+			case:
+				unreachable()
+			}
+		}
+		return nil
+	}
+
+	op_inst := numeric_cast_op_inst(v_type, type)
+	if op_inst != nil {
+		return op_inst(builder, ti.type, value.id)
 	}
 
 	#partial switch type.kind {
-	case .Float:
-		#partial switch v_type.kind {
-		case .Float:
-			return spv.OpFConvert(builder,    ti.type, value.id)
-		case .Uint:
-			return spv.OpConvertUToF(builder, ti.type, value.id)
-		case .Int:
-			return spv.OpConvertSToF(builder, ti.type, value.id)
-		case:
-			unreachable()
-		}
-	case .Int:
-		#partial switch v_type.kind {
-		case .Float:
-			return spv.OpConvertFToS(builder, ti.type, value.id)
-		case .Uint:
-			return spv.OpSConvert(builder,    ti.type, value.id)
-		case .Int:
-			return spv.OpSConvert(builder,    ti.type, value.id)
-		case:
-			unreachable()
-		}
-	case .Uint:
-		#partial switch v_type.kind {
-		case .Float:
-			return spv.OpConvertFToU(builder, ti.type, value.id)
-		case .Uint:
-			return spv.OpUConvert(builder,    ti.type, value.id)
-		case .Int:
-			return spv.OpSConvert(builder,    ti.type, value.id)
-		case:
-			unreachable()
-		}
 	case .Vector:
 		type := type.variant.(^types.Vector)
 		if types.is_numeric(v_type) {
@@ -1115,47 +1127,9 @@ cg_cast :: proc(
 			}
 			return spv.OpCompositeConstruct(builder, ti.type, ..values)
 		} else {
-			v_type := v_type.variant.(^types.Vector).elem
-			if type.size == v_type.size && types.is_integer(v_type) && types.is_integer(type) {
-				return spv.OpBitcast(builder, ti.type, value.id)
-			}
-			#partial switch type.elem.kind {
-			case .Float:
-				#partial switch v_type.kind {
-				case .Float:
-					return spv.OpFConvert(builder,    ti.type, value.id)
-				case .Uint:
-					return spv.OpConvertUToF(builder, ti.type, value.id)
-				case .Int:
-					return spv.OpConvertSToF(builder, ti.type, value.id)
-				case:
-					unreachable()
-				}
-			case .Int:
-				#partial switch v_type.kind {
-				case .Float:
-					return spv.OpConvertFToS(builder, ti.type, value.id)
-				case .Uint:
-					return spv.OpSConvert(builder,    ti.type, value.id)
-				case .Int:
-					return spv.OpSConvert(builder,    ti.type, value.id)
-				case:
-					unreachable()
-				}
-			case .Uint:
-				#partial switch v_type.kind {
-				case .Float:
-					return spv.OpConvertFToU(builder, ti.type, value.id)
-				case .Uint:
-					return spv.OpUConvert(builder,    ti.type, value.id)
-				case .Int:
-					return spv.OpSConvert(builder,    ti.type, value.id)
-				case:
-					unreachable()
-				}
-			case:
-				unreachable()
-			}
+			op_inst := numeric_cast_op_inst(v_type.variant.(^types.Vector).elem, type.elem)
+			assert(op_inst != nil)
+			return op_inst(builder, ti.type, value.id)
 		}
 	case .Matrix:
 		assert(types.is_numeric(v_type))
