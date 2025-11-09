@@ -1066,6 +1066,11 @@ cg_cast :: proc(
 	}
 
 	ti := cg_type(ctx, type)
+
+	if type.size == v_type.size && types.is_integer(v_type) && types.is_integer(type) {
+		return spv.OpBitcast(builder, ti.type, value.id)
+	}
+
 	#partial switch type.kind {
 	case .Float:
 		#partial switch v_type.kind {
@@ -1111,6 +1116,9 @@ cg_cast :: proc(
 			return spv.OpCompositeConstruct(builder, ti.type, ..values)
 		} else {
 			v_type := v_type.variant.(^types.Vector).elem
+			if type.size == v_type.size && types.is_integer(v_type) && types.is_integer(type) {
+				return spv.OpBitcast(builder, ti.type, value.id)
+			}
 			#partial switch type.elem.kind {
 			case .Float:
 				#partial switch v_type.kind {
