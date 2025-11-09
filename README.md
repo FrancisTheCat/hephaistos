@@ -47,12 +47,18 @@ fragment_main :: proc(
 
 ```
 
-```
+```odin
 spirv_code, errors := hephaistos.compile_shader(
     "shader.hep",
     #load("shader.hep"),
     shared_types = { Vertex_Shader_Constants, Fragment_Shader_Uniforms, },
 )
+```
+
+## OpenGL
+When using Hephaistos with OpenGL you will have to specify the SPIR-V version as 1.0:
+```odin
+hephaistos.compile_shader(..., spirv_version = hephaistos.SPIR_V_VERSION_1_0, ...)
 ```
 
 # Special Thanks
