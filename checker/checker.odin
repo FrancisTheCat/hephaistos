@@ -461,6 +461,8 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		values := make([]Operand,         len(v.values), checker.allocator)
 
 		seen := make(map[string]struct{}, context.temp_allocator)
+		v.location = -1
+		v.binding  = -1
 		for a in v.attributes {
 			if a.ident.text in seen {
 				error(checker, a.ident, "duplicate attribute: '%v'", a.ident.text)
@@ -493,6 +495,17 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					v.binding = int(val)
 				} else {
 					error(checker, value, "'binding' attribute value must be a constant integer")
+				}
+			case "location":
+				if a.value == nil {
+					error(checker, a.ident, "'location' attribute requires a value")
+					break
+				}
+				value := check_expr(checker, a.value)
+				if val, ok := value.value.(i64); ok {
+					v.location = int(val)
+				} else {
+					error(checker, value, "'location' attribute value must be a constant integer")
 				}
 			case "descriptor_set":
 				if a.value == nil {
@@ -1324,6 +1337,10 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			}
 			shader_stage = s
 		}
+
+		prev_shader_stage         := checker.shader_stage
+		defer checker.shader_stage = prev_shader_stage
+
 		v.shader_stage       = shader_stage
 		checker.shader_stage = shader_stage
 

@@ -1,6 +1,6 @@
 SHADOW_PASS :: #config(SHADOW_PASS, false)
 
-// /* VERTEX SHADER */
+/* VERTEX SHADER */
 
 @(push_constant)
 vs_constants: #import(Vertex_Shader_Uniforms) // imported from Odin

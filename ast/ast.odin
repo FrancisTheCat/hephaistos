@@ -225,6 +225,7 @@ Decl_Value :: struct {
 	push_constant:  bool,
 	readonly:       bool,
 	binding:        int,
+	location:       int,
 	descriptor_set: int,
 	link_name:      string,
 	local_size:     [3]i32,

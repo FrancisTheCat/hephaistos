@@ -13,6 +13,7 @@ import "ast"
 import "checker"
 import "types"
 import "cg"
+import spv "spirv-odin"
 
 Token              :: tokenizer.Token
 Error              :: tokenizer.Error
@@ -80,12 +81,22 @@ Ast_Any_Expr       :: ast.Any_Expr
 Ast_Any_Decl       :: ast.Any_Decl
 Ast_Any_Stmt       :: ast.Any_Stmt
 
+SPIR_V_VERSION_CURRENT :: spv.VERSION
+SPIR_V_VERSION_1_0     :: 0x00010000 // use with OpenGL
+SPIR_V_VERSION_1_1     :: 0x00010100
+SPIR_V_VERSION_1_2     :: 0x00010200
+SPIR_V_VERSION_1_3     :: 0x00010300
+SPIR_V_VERSION_1_4     :: 0x00010400
+SPIR_V_VERSION_1_5     :: 0x00010500
+SPIR_V_VERSION_1_6     :: 0x00010600
+
 @(require_results)
 compile_shader :: proc(
-	source:       string,
-	path:         string,
-	defines:      map[string]Const_Value = {},
-	shared_types: []typeid = {},
+	source:        string,
+	path:          string,
+	defines:       map[string]Const_Value = {},
+	shared_types:  []typeid               = {},
+	spirv_version: u32                    = SPIR_V_VERSION_CURRENT,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (code: []u32, errors: []Error) {
@@ -107,7 +118,7 @@ compile_shader :: proc(
 		return
 	}
 
-	code = cg_generate(&checker, stmts, path, source, allocator = allocator)
+	code = cg_generate(&checker, stmts, path, source, spirv_version, allocator = allocator)
 
 	return
 }

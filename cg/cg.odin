@@ -275,8 +275,15 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 					cg_insert_entity(ctx, name, storage_class, type, id)
 
 					if v.uniform || types.is_sampler(type) || types.is_buffer(type) {
-						spv.OpDecorate(&ctx.annotations, id, .Binding,       u32(v.binding))
-						spv.OpDecorate(&ctx.annotations, id, .DescriptorSet, u32(v.descriptor_set))
+						if v.binding != -1 {
+							spv.OpDecorate(&ctx.annotations, id, .Binding, u32(v.binding))
+						}
+						if v.descriptor_set != -1 {
+							spv.OpDecorate(&ctx.annotations, id, .DescriptorSet, u32(v.descriptor_set))
+						}
+						if v.location != -1 {
+							spv.OpDecorate(&ctx.annotations, id, .Location, u32(v.location))
+						}
 					}
 				}
 			} else {
