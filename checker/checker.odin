@@ -66,6 +66,14 @@ builtin_names: [ast.Builtin_Id]string = {
 	.Log2         = "log2",
 	.Fract        = "fract",
 	.Floor        = "floor",
+	.Ceil         = "ceil",
+	.Lerp         = "lerp",
+	.Round        = "round",
+	.Trunc        = "trunc",
+	.Smooth_Step  = "smooth_step",
+	.Distance     = "distance",
+	.Inverse_Sqrt = "inverse_sqrt",
+	.Abs          = "abs",
 
 	.Texture_Size = "texture_size",
 
@@ -724,37 +732,9 @@ checker_init :: proc(
 	scope_insert_entity(checker, entity_new(.Type, { text = "f32",  }, types.t_f32,  allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Type, { text = "f64",  }, types.t_f64,  allocator = allocator))
 
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "dot",          }, nil, builtin_id = .Dot,          allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "cross",        }, nil, builtin_id = .Cross,        allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "min",          }, nil, builtin_id = .Min,          allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "max",          }, nil, builtin_id = .Max,          allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "clamp",        }, nil, builtin_id = .Clamp,        allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "inverse",      }, nil, builtin_id = .Inverse,      allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "transpose",    }, nil, builtin_id = .Transpose,    allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "determinant",  }, nil, builtin_id = .Determinant,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "pow",          }, nil, builtin_id = .Pow,          allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "sqrt",         }, nil, builtin_id = .Sqrt,         allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "sin",          }, nil, builtin_id = .Sin,          allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "cos",          }, nil, builtin_id = .Cos,          allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "tan",          }, nil, builtin_id = .Tan,          allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "exp",          }, nil, builtin_id = .Exp,          allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "log",          }, nil, builtin_id = .Log,          allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "log2",         }, nil, builtin_id = .Log2,         allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "exp2",         }, nil, builtin_id = .Exp2,         allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "normalize",    }, nil, builtin_id = .Normalize,    allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "fract",        }, nil, builtin_id = .Fract,        allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "floor",        }, nil, builtin_id = .Floor,        allocator = allocator))
-
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "texture_size", }, nil, builtin_id = .Texture_Size, allocator = allocator))
-
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "discard",      }, nil, builtin_id = .Discard,      allocator = allocator))
-
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "ddx",          }, nil, builtin_id = .Ddx,          allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "ddy",          }, nil, builtin_id = .Ddy,          allocator = allocator))
-
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "size_of",      }, nil, builtin_id = .Size_Of,      allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "align_of",     }, nil, builtin_id = .Align_Of,     allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Builtin, { text = "type_of",      }, nil, builtin_id = .Type_Of,      allocator = allocator))
+	for name, builtin in builtin_names {
+		scope_insert_entity(checker, entity_new(.Builtin, { text = name, }, nil, builtin_id = builtin, allocator = allocator))
+	}
 
 	checker.shared_types.allocator = allocator
 	for s in shared_types {
@@ -1594,6 +1574,31 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				operand.type = type
 				operand.mode = .RValue
+			case .Lerp, .Smooth_Step:
+				if len(v.args) != 3 {
+					error(checker, v, "builtin '%s' expects at least three arguments, got %d", builtin_names[v.builtin], len(v.args))
+					break
+				}
+				a, b, t := args[0].type, args[1].type, args[2].type
+				type    := types.default_type(types.op_result_type(a, b, false, {}))
+				if type.kind == .Invalid {
+					error(checker, v, "type mismatch in builtin '%s': %v vs %v", builtin_names[v.builtin], a, b)
+					break
+				}
+				if !types.is_numeric(type) && !types.is_vector(type) {
+					error(checker, v, "builtin '%s' expects a two vectors or scalars of the same type, got %v", builtin_names[v.builtin], type)
+					break
+				}
+				if !types.is_float(t) {
+					error(checker, v, "builtin '%s' expects a float for the interpolation value, got %v", builtin_names[v.builtin], t)
+					break
+				}
+				for arg in v.args[:2] {
+					arg.value.type = type
+				}
+				v.args[2].value.type = types.default_type(t)
+				operand.type         = type
+				operand.mode         = .RValue
 			case .Inverse:
 				if len(v.args) != 1 {
 					error(checker, v, "builtin 'inverse' expects one argument, got %d", len(args))
@@ -1648,7 +1653,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					break
 				}
 				fallthrough
-			case .Sqrt, .Sin, .Cos, .Tan, .Exp, .Exp2, .Log, .Log2, .Floor, .Fract:
+			case .Sqrt, .Sin, .Cos, .Tan, .Exp, .Exp2, .Log, .Log2, .Floor, .Fract, .Ceil, .Round, .Trunc, .Inverse_Sqrt:
 				if len(v.args) != 1 {
 					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(args))
 					break
@@ -1657,6 +1662,24 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				type := types.op_result_type(arg.type, types.t_f32, false, {})
 				if type.kind == .Invalid || type.kind == .Matrix {
 					error(checker, v, "builtin '%s' expects one argument of type float or vector, got %v", builtin_names[v.builtin], arg.type)
+					return
+				}
+				v.args[0].value.type = type
+				operand.mode         = .RValue
+				operand.type         = type
+			case .Abs:
+				if len(v.args) != 1 {
+					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(args))
+					break
+				}
+				type := types.default_type(args[0].type)
+				t    := type
+				if types.is_vector(type) {
+					t = types.vector_elem(type)
+				}
+				#partial switch t.kind {
+				case .Float, .Int:
+					error(checker, v, "builtin '%s' expects a signed scalar or a vector, got %v", builtin_names[v.builtin], type)
 					return
 				}
 				v.args[0].value.type = type
@@ -1689,11 +1712,30 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				v := args[0]
 				if !types.is_vector(v.type) || !types.is_float(v.type.variant.(^types.Vector).elem) {
-					error(checker, v, "builtin 'tan' expects a vector of floats, got %v", v.type)
+					error(checker, v, "builtin 'distance' expects a vector of floats, got %v", v.type)
 					return
 				}
 				operand.mode = .RValue
 				operand.type = v.type
+			case .Distance:
+				if len(v.args) != 2 {
+					error(checker, v, "builtin 'distance' expects one argument, got %d", len(v.args))
+					return
+				}
+				a, b := args[0].type, args[1].type
+				type := types.op_result_type(a, b, false, {})
+				if type.kind == .Invalid {
+					error(checker, v, "type mismatch in builtin 'distance': %v vs %v", a, b)
+					break
+				}
+				if !types.is_vector(type) {
+					error(checker, v, "builtin 'distance' expects a two vectors of the same type, got %v", type)
+					break
+				}
+				v.args[0].value.type = type
+				v.args[1].value.type = type
+				operand.mode         = .RValue
+				operand.type         = types.vector_elem(type)
 			case .Discard:
 				if len(v.args) != 0 {
 					error(checker, v, "builtin 'discard' expects no arguments, got %d", len(v.args))

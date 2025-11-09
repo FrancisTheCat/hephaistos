@@ -106,7 +106,7 @@ CG_Scope :: struct {
 	entities:     map[string]CG_Entity,
 	label:        string,
 	label_id:     spv.Id,
-	return_value: spv.Id, // 0 when the return values a shader stage outputs
+	return_value: spv.Id, // 0 when the return values are shader stage outputs
 	return_type:  ^types.Type,
 	outputs:      []spv.Id,
 }
@@ -165,9 +165,6 @@ cg_scope :: proc(
 
 register_type :: proc(registry: ^Type_Registry, t: ^types.Type, flags: CG_Type_Flags) -> (type_info: ^CG_Type_Info, ok: bool) {
 	hash := types.type_hash(t)
-	// if flags && t.kind == .Struct {
-	// 	hash = ~hash
-	// }
 	if hash == 0 {
 		hash = 1
 	}
@@ -1347,6 +1344,24 @@ _cg_expr :: proc(
 				return { id = spv_glsl.OpFract(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Floor:
 				return { id = spv_glsl.OpFloor(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Ceil:
+				return { id = spv_glsl.OpCeil(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Round:
+				return { id = spv_glsl.OpRound(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Trunc:
+				return { id = spv_glsl.OpTrunc(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Inverse_Sqrt:
+				return { id = spv_glsl.OpInverseSqrt(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Abs:
+				t := v.args[0].value.type
+				if types.is_vector(t) {
+					t = types.vector_elem(t)
+				}
+				if types.is_integer(t) {
+					return { id = spv_glsl.OpSAbs(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+				} else {
+					return { id = spv_glsl.OpFAbs(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+				}
 			case .Pow:
 				x := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
 				y := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), v.type)
@@ -1354,6 +1369,10 @@ _cg_expr :: proc(
 			case .Normalize:
 				v := cg_expr(ctx, builder, v.args[0].value)
 				return { id = spv_glsl.OpNormalize(builder, cg_type(ctx, v.type).type, v.id), }
+			case .Distance:
+				a := cg_expr(ctx, builder, v.args[0].value).id
+				b := cg_expr(ctx, builder, v.args[1].value).id
+				return { id = spv_glsl.OpDistance(builder, ti.type, a, b), }
 			case .Clamp:
 				elem_type := v.type
 				if v.type.kind == .Vector {
@@ -1374,6 +1393,16 @@ _cg_expr :: proc(
 					id = spv_glsl.OpUClamp(builder, cg_type(ctx, v.type).type, value, min, max)
 				}
 				return { id = id, }
+			case .Lerp:
+				x := cg_expr(ctx, builder, v.args[0].value)
+				y := cg_expr(ctx, builder, v.args[1].value)
+				a := cg_expr(ctx, builder, v.args[2].value)
+				return { id = spv_glsl.OpFMix(builder, ti.type, x.id, y.id, a.id), }
+			case .Smooth_Step:
+				x := cg_expr(ctx, builder, v.args[0].value)
+				y := cg_expr(ctx, builder, v.args[1].value)
+				a := cg_expr(ctx, builder, v.args[2].value)
+				return { id = spv_glsl.OpSmoothStep(builder, ti.type, x.id, y.id, a.id), }
 			case .Determinant:
 				return { id = spv_glsl.OpDeterminant  (builder, cg_type(ctx, v.type).type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Inverse:

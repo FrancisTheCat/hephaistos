@@ -126,7 +126,15 @@ Builtin_Id :: enum {
 	Exp2,
 	Log2,
 	Floor,
+	Ceil,
 	Fract,
+	Lerp,
+	Round,
+	Trunc,
+	Smooth_Step,
+	Distance,
+	Inverse_Sqrt,
+	Abs,
 
 	Texture_Size,
 
