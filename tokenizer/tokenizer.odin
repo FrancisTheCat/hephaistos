@@ -77,6 +77,7 @@ Token_Kind :: enum u16 {
 
 	Struct,
 	Enum,
+	Bit_Set,
 	Proc,
 	Vector,
 	Matrix,
@@ -537,6 +538,7 @@ token_strings := #sparse[Token_Kind]string {
 
 	.Struct      = "struct",
 	.Enum        = "enum",
+	.Bit_Set     = "bit_set",
 	.Proc        = "proc",
 	.Vector      = "vector",
 	.Matrix      = "matrix",

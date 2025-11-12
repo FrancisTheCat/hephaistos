@@ -2248,6 +2248,11 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		} else {
 			error(checker, dimensions, "expected a constant integer as the dimension of a sampler")
 		}
+	case ^ast.Type_Bit_Set:
+		enum_type   := check_type(checker, v.enum_type)
+		backing     := check_type(checker, v.backing)
+		operand.type = types.bit_set_new(enum_type, backing, checker.allocator)
+		operand.mode = .Type
 	}
 
 	return

@@ -108,6 +108,14 @@ when SHADOW_PASS {
 	    	}
 	    }
 
+		Some_Enum :: enum {
+	
+		}
+
+		Some_Bit_Set :: bit_set[Some_Enum; u32]
+
+		bits: Some_Bit_Set
+
 		lighting := clamp(dot(v_normal, shadow_uniforms.light_direction), 0, 1)
 		f_color   = (0.2 + 0.8 * lighting * f32(1 - shadow)) * texture[v_tex_coords]
 		return

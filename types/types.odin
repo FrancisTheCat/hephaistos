@@ -69,6 +69,12 @@ Enum :: struct {
 	backing:    ^Type,
 }
 
+Bit_Set :: struct {
+	using base: Type,
+	enum_type:  ^Type,
+	backing:    ^Type,
+}
+
 Kind :: enum {
 	Invalid,
 
@@ -84,6 +90,7 @@ Kind :: enum {
 	Proc,
 	Sampler,
 	Enum,
+	Bit_Set,
 
 	Tuple,
 }
@@ -100,6 +107,7 @@ Type :: struct {
 		^Proc,
 		^Sampler,
 		^Enum,
+		^Bit_Set,
 	},
 }
 
@@ -229,6 +237,13 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 		type := type.variant.(^Sampler)
 		fmt.wprintf(w, "sampler[%d]", type.dimensions)
 		print_writer(w, type.texel_type)
+	case .Bit_Set:
+		type := type.variant.(^Bit_Set)
+		fmt.wprintf(w, "bit_set[")
+		print_writer(w, type.enum_type)
+		fmt.wprintf(w, ";")
+		print_writer(w, type.backing)
+		fmt.wprintf(w, "]")
 	}
 }
 
@@ -354,6 +369,8 @@ base_type :: proc(type: ^Type) -> ^Type {
 			// }
 		case .Enum:
 			type = type.variant.(^Enum).backing
+		case .Bit_Set:
+			type = type.variant.(^Bit_Set).backing
 		case:
 			return type
 		}
@@ -557,6 +574,9 @@ type_hash :: proc(type: ^Type, seed: u64 = 0xcbf29ce484222325) -> u64 {
 		}
 	case ^Buffer:
 		h = type_hash(v.elem, h)
+	case ^Bit_Set:
+		h = type_hash(v.enum_type, h)
+		h = type_hash(v.backing,   h)
 	}
 	
 	return h
@@ -712,6 +732,20 @@ matrix_new :: proc(col_type: ^Vector, cols: int, allocator: mem.Allocator) -> ^M
 // 	type.size = offset
 // 	return type
 // }
+
+@(require_results)
+bit_set_new :: proc(enum_type: ^Type, backing: ^Type, allocator: mem.Allocator) -> ^Bit_Set {
+	assert(enum_type != nil)
+	assert(backing   != nil)
+
+	type           := new(.Bit_Set, Bit_Set, allocator)
+	type.enum_type  = enum_type
+	type.backing    = backing
+	type.size       = backing.size
+	type.align      = backing.align
+
+	return type
+}
 
 @(require_results)
 is_comparable :: proc(type: ^Type) -> bool{

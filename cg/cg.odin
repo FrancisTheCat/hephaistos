@@ -529,7 +529,7 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) 
 		return info
 	}
 
-	#partial switch type.kind {
+	switch type.kind {
 	case .Uint:
 		info.type = spv.OpTypeInt(&ctx.types, u32(type.size * 8), 0)
 		cap: spv.Capability
@@ -649,6 +649,8 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) 
 			spv.OpDecorate(&ctx.annotations, info.type, .Block)
 			spv.OpMemberDecorate(&ctx.annotations, info.type, 0, .Offset, 0)
 		}
+	case .Invalid, .Enum, .Bit_Set:
+		unreachable()
 	}
 
 	return info
@@ -1598,7 +1600,7 @@ _cg_expr :: proc(
 		then_value := cg_expr(ctx, builder, v.then_expr).id
 		else_value := cg_expr(ctx, builder, v.else_expr).id
 		return { id = spv.OpSelect(builder, cg_type(ctx, v.type).type, cond, then_value, else_value), }
-	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Import, ^ast.Type_Sampler, ^ast.Type_Enum:
+	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Import, ^ast.Type_Sampler, ^ast.Type_Enum, ^ast.Type_Bit_Set:
 		panic("tried to cg type as expression")
 	case ^ast.Expr_Config:
 		panic("tried to cg config var as expression")

@@ -309,6 +309,18 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 		s.values = values
 		return s, true
 
+	case .Bit_Set:
+		token_advance(parser)
+		token_expect(parser, .Open_Bracket) or_return
+		enum_type  := parse_expr(parser) or_return
+		token_expect(parser, .Semicolon) or_return
+		backing    := parse_expr(parser) or_return
+		token_expect(parser, .Close_Bracket) or_return
+		b          := ast.new(ast.Type_Bit_Set, token.location, parser.end_location, parser.allocator)
+		b.enum_type = enum_type
+		b.backing   = backing
+		return b, true
+
 	case .Matrix:
 		token_advance(parser)
 		token_expect(parser, .Open_Bracket) or_return

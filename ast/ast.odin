@@ -221,6 +221,12 @@ Type_Enum :: struct {
 	backing:    ^Expr,
 }
 
+Type_Bit_Set :: struct {
+	using node: Expr,
+	enum_type: ^Expr,
+	backing:   ^Expr,
+}
+
 
 Decl_Value :: struct {
 	using node:     Decl,
@@ -348,6 +354,7 @@ Any_Node :: union {
 	^Type_Matrix,
 	^Type_Sampler,
 	^Type_Enum,
+	^Type_Bit_Set,
 
 	^Stmt_Return,
 	^Stmt_Break,
@@ -387,6 +394,7 @@ Any_Expr :: union {
 	^Type_Matrix,
 	^Type_Sampler,
 	^Type_Enum,
+	^Type_Bit_Set,
 }
 
 Any_Decl :: union {
