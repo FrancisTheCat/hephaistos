@@ -1712,14 +1712,14 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				v := args[0]
 				if !types.is_vector(v.type) || !types.is_float(v.type.variant.(^types.Vector).elem) {
-					error(checker, v, "builtin 'distance' expects a vector of floats, got %v", v.type)
+					error(checker, v, "builtin 'normalize' expects a vector of floats, got %v", v.type)
 					return
 				}
 				operand.mode = .RValue
 				operand.type = v.type
 			case .Distance:
 				if len(v.args) != 2 {
-					error(checker, v, "builtin 'distance' expects one argument, got %d", len(v.args))
+					error(checker, v, "builtin 'distance' expects two arguments, got %d", len(v.args))
 					return
 				}
 				a, b := args[0].type, args[1].type
