@@ -1781,7 +1781,11 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 
 			arg_index := 0
 			for e in v.args {
-				value := check_expr(checker, e.value, type_hint = proc_type.args[arg_index].type)
+				type_hint: ^types.Type
+				if arg_index < len(proc_type.args) {
+					type_hint = proc_type.args[arg_index].type
+				}
+				value := check_expr(checker, e.value, type_hint = type_hint)
 				if arg_index >= len(proc_type.args) {
 					continue
 				}
