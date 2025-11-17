@@ -1910,10 +1910,27 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			for field in v.fields {
 				f := check_expr(checker, field.value, type_hint = type.elem)
 				t := f.type
-				if types.is_vector(f.type) {
+				if types.is_vector(t) {
 					v        := f.type.variant.(^types.Vector)
 					t         = v.elem
 					n_values += v.count
+				} else if types.is_tuple(t) {
+					tuple := t.variant.(^types.Struct)
+					for sf in tuple.fields {
+						t := sf.type
+						if types.is_vector(sf.type) {
+							v        := sf.type.variant.(^types.Vector)
+							t         = v.elem
+							n_values += v.count
+						} else {
+							n_values += 1
+						}
+						if !types.implicitly_castable(t, type.elem) {
+							error(checker, field.value, "expected value of type %v but got %v", type.elem, f.type)
+							return
+						}
+					}
+					continue
 				} else {
 					n_values        += 1
 					field.value.type = type.elem

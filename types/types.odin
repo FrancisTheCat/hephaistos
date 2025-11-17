@@ -361,12 +361,7 @@ base_type :: proc(type: ^Type) -> ^Type {
 	for {
 		#partial switch type.kind {
 		case .Tuple: 
-			// t := type.variant.(^Struct)
-			// if len(t.fields) == 1 {
-			// 	type = t.fields[0].type
-			// } else {
-				return type
-			// }
+			return type
 		case .Enum:
 			type = type.variant.(^Enum).backing
 		case .Bit_Set:
@@ -479,6 +474,11 @@ castable :: proc(from, to: ^Type) -> bool {
 @(require_results)
 is_vector :: proc(type: ^Type) -> bool {
 	return type.kind == .Vector
+}
+
+@(require_results)
+is_tuple :: proc(type: ^Type) -> bool {
+	return type.kind == .Tuple
 }
 
 @(require_results)

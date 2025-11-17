@@ -113,18 +113,20 @@ when SHADOW_PASS {
 				if (v_shadow_position.z - BIAS > d) {
 					shadow = 1
 				}
-	     	} else {
-	 	    	shadow = shadow_sample_bilinear(depth_texture, v_shadow_position.xy, v_shadow_position.z, BIAS)
-	     	}
+	    	} else {
+				shadow = shadow_sample_bilinear(depth_texture, v_shadow_position.xy, v_shadow_position.z, BIAS)
+	    	}
 		}
 
 		Some_Enum :: enum {
 	
-	 	}
+		}
 
 	 	Some_Bit_Set :: bit_set[Some_Enum; u32]
 
 	 	bits: Some_Bit_Set
+
+		a: [4]f32 = { aces_approx(f_color.rgb), 0, }
 
 		lighting := clamp(dot(v_normal, shadow_uniforms.light_direction), 0, 1)
 		f_color   = (0.2 + 0.8 * lighting * f32(1 - shadow)) * texture[v_tex_coords]

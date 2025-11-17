@@ -1475,8 +1475,9 @@ _cg_expr :: proc(
 			}
 			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..values), }
 		} else {
-			values := make([]spv.Id, len(v.fields), context.temp_allocator)
-			for field, i in v.fields {
+			values := make([dynamic]spv.Id, len(v.fields), context.temp_allocator)
+			i := 0
+			for field in v.fields {
 				type: ^types.Type
 				#partial switch v.type.kind {
 				case .Vector:
@@ -1487,13 +1488,31 @@ _cg_expr :: proc(
 					type = v.type.variant.(^types.Struct).fields[i].type
 				}
 				value := cg_expr(ctx, builder, field.value)
+				if types.is_tuple(value.type) {
+					t := value.type.variant.(^types.Struct)
+					for field_type in t.fields {
+						field_value := CG_Value {
+							id   = value.id, // totally wrong!!! only works for tuples with one value
+							type = field_type.type,
+						}
+						if types.is_vector(field_type.type) && types.is_vector(v.type) {
+							values[i] = cg_deref(ctx, builder, field_value)
+						} else {
+							// TODO: wrong for struct fields, the checker does not let that through anyway, it should tho
+							values[i] = cg_cast(ctx, builder, field_value, type)
+						}
+						i += 1
+					}
+					continue
+				}
 				if types.is_vector(value.type) && types.is_vector(v.type) {
 					values[i] = cg_deref(ctx, builder, value)
 				} else {
 					values[i] = cg_cast(ctx, builder, value, type)
 				}
+				i += 1
 			}
-			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..values), }
+			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..values[:]), }
 		}
 	case ^ast.Expr_Index:
 		lhs := cg_expr(ctx, builder, v.lhs, false)
