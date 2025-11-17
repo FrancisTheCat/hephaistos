@@ -87,11 +87,6 @@ CG_Context :: struct {
 	spirv_version:      u32,
 }
 
-CG_Entity :: struct {
-	type:  ^types.Type,
-	value: CG_Value,
-}
-
 CG_Value :: struct {
 	id:              spv.Id,
 	storage_class:   CG_Storage_Class,
@@ -103,7 +98,7 @@ CG_Value :: struct {
 }
 
 CG_Scope :: struct {
-	entities:     map[string]CG_Entity,
+	entities:     map[string]CG_Value,
 	label:        string,
 	label_id:     spv.Id,
 	return_value: spv.Id, // 0 when the return values are shader stage outputs
@@ -111,7 +106,7 @@ CG_Scope :: struct {
 	outputs:      []spv.Id,
 }
 
-cg_lookup_entity :: proc(ctx: ^CG_Context, name: string) -> ^CG_Entity {
+cg_lookup_entity :: proc(ctx: ^CG_Context, name: string) -> ^CG_Value {
 	#reverse for scope in ctx.scopes {
 		e := &scope.entities[name]
 		if e != nil {
@@ -124,11 +119,9 @@ cg_lookup_entity :: proc(ctx: ^CG_Context, name: string) -> ^CG_Entity {
 cg_insert_entity :: proc(ctx: ^CG_Context, name: string, storage_class: CG_Storage_Class, type: ^types.Type, id: spv.Id) {
 	spv.OpName(&ctx.debug_b, id, name)
 	ctx.scopes[len(ctx.scopes) - 1].entities[name] = {
-		type  = type,
-		value = {
-			id            = id,
-			storage_class = storage_class,
-		},
+		type          = type,
+		id            = id,
+		storage_class = storage_class,
 	}
 }
 
@@ -819,8 +812,8 @@ cg_expr_binary :: proc(
 	lhs_value, rhs_value: CG_Value,
 	type:                ^^types.Type,
 ) -> spv.Id {
-	lhs      := cg_deref(ctx, builder, lhs_value)
-	rhs      := cg_deref(ctx, builder, rhs_value)
+	lhs      := lhs_value.id
+	rhs      := rhs_value.id
 	lhs_type := lhs_value.type
 	rhs_type := rhs_value.type
 
@@ -1179,7 +1172,7 @@ _cg_expr :: proc(
 		value.id  = cg_expr_binary(ctx, builder, v.op, lhs, rhs, &value.type)
 		return
 	case ^ast.Expr_Ident:
-		value = cg_lookup_entity(ctx, v.ident.text).value
+		value = cg_lookup_entity(ctx, v.ident.text)^
 		#partial switch value.storage_class {
 		case .Push_Constant, .Storage_Buffer, .Uniform, .Uniform_Constant:
 			value.explicit_layout = true
