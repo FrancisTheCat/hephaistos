@@ -47,42 +47,42 @@ when SHADOW_PASS {
 		
 	}
 } else {
- @(binding = 1) texture:       sampler[2][3]f32
- @(binding = 2) depth_texture: sampler[2]f32
+	@(binding = 1) texture:       sampler[2][3]f32
+	@(binding = 2) depth_texture: sampler[2]f32
 
- shadow_sample_bilinear :: proc(tex: sampler[2]f32, coords: [2]f32, current_depth, bias: f32) -> f32 {
- 	tex_size     := ([2]f32)(texture_size(tex))
- 	inv_tex_size := 1 / tex_size
+	shadow_sample_bilinear :: proc(tex: sampler[2]f32, coords: [2]f32, current_depth, bias: f32) -> f32 {
+		tex_size     := ([2]f32)(texture_size(tex))
+		inv_tex_size := 1 / tex_size
 
-     texel_pos := coords * tex_size
-     base      := floor(texel_pos)
-     f         := fract(texel_pos)
+		texel_pos := coords * tex_size
+		base      := floor(texel_pos)
+		f         := fract(texel_pos)
 
-     base_uv := base * inv_tex_size
-    
-     uv00 := base_uv
-     uv10 := base_uv + [2]f32{ inv_tex_size.x, 0.0, }
-     uv01 := base_uv + [2]f32{ 0.0, inv_tex_size.y, }
-     uv11 := base_uv + inv_tex_size
+		base_uv := base * inv_tex_size
 
-     w00 := (1.0 - f.x) * (1.0 - f.y)
-     w10 := f.x         * (1.0 - f.y)
-     w01 := (1.0 - f.x) * f.y
-     w11 := f.x         * f.y
+		uv00 := base_uv
+		uv10 := base_uv + [2]f32{ inv_tex_size.x, 0.0, }
+		uv01 := base_uv + [2]f32{ 0.0, inv_tex_size.y, }
+		uv11 := base_uv + inv_tex_size
 
-     d00 := tex[uv00] * 0.5 + 0.5
-     d10 := tex[uv10] * 0.5 + 0.5
-     d01 := tex[uv01] * 0.5 + 0.5
-     d11 := tex[uv11] * 0.5 + 0.5
+		w00 := (1.0 - f.x) * (1.0 - f.y)
+		w10 := f.x         * (1.0 - f.y)
+		w01 := (1.0 - f.x) * f.y
+		w11 := f.x         * f.y
 
-     shadow := 0.0
-     shadow += ((current_depth - bias) > d00 ? 1 : 0) * w00
-     shadow += ((current_depth - bias) > d10 ? 1 : 0) * w10
-     shadow += ((current_depth - bias) > d01 ? 1 : 0) * w01
-     shadow += ((current_depth - bias) > d11 ? 1 : 0) * w11
+		d00 := tex[uv00] * 0.5 + 0.5
+		d10 := tex[uv10] * 0.5 + 0.5
+		d01 := tex[uv01] * 0.5 + 0.5
+		d11 := tex[uv11] * 0.5 + 0.5
 
-     return shadow
- }
+		shadow := 0.0
+		shadow += ((current_depth - bias) > d00 ? 1 : 0) * w00
+		shadow += ((current_depth - bias) > d10 ? 1 : 0) * w10
+		shadow += ((current_depth - bias) > d01 ? 1 : 0) * w01
+		shadow += ((current_depth - bias) > d11 ? 1 : 0) * w11
+
+		return shadow
+	}
 
 	aces_approx :: proc(v: [3]f32) -> [3]f32 {
 	    v := v * 0.6
@@ -94,40 +94,40 @@ when SHADOW_PASS {
 	    return clamp((v * (a * v + b)) / (v * (c * v + d) + e), 0, 1)
 	}
 
- @(fragment_shader, link_name = "main")
- fragment_main :: proc(
- 	v_position:        [3]f32 @ 0,
- 	v_normal:          [3]f32 @ 1,
- 	v_tex_coords:      [2]f32 @ 2,
- 	v_shadow_position: [3]f32 @ 3,
- ) -> (
- 	f_color: [3]f32 @ 0,
- ) {
- 	v_normal := normalize(v_normal)
+	@(fragment_shader, link_name = "main")
+	fragment_main :: proc(
+		v_position:        [3]f32 @ 0,
+		v_normal:          [3]f32 @ 1,
+		v_tex_coords:      [2]f32 @ 2,
+		v_shadow_position: [3]f32 @ 3,
+	) -> (
+		f_color: [3]f32 @ 0,
+	) {
+		v_normal := normalize(v_normal)
 
-     BIAS :: 0.001
-     shadow: f32
-     if v_shadow_position.x >= 0 && v_shadow_position.x <= 1 && v_shadow_position.y >= 0 && v_shadow_position.y <= 1 {
-     	when false {
- 	    	d := depth_texture[v_shadow_position.xy] * 0.5 + 0.5
- 	    	if (v_shadow_position.z - BIAS > d) {
- 	    		shadow = 1
- 	    	}
-     	} else {
- 	    	shadow = shadow_sample_bilinear(depth_texture, v_shadow_position.xy, v_shadow_position.z, BIAS)
-     	}
-     }
+		BIAS :: 0.001
+		shadow: f32
+		if v_shadow_position.x >= 0 && v_shadow_position.x <= 1 && v_shadow_position.y >= 0 && v_shadow_position.y <= 1 {
+			when false {
+				d := depth_texture[v_shadow_position.xy] * 0.5 + 0.5
+				if (v_shadow_position.z - BIAS > d) {
+					shadow = 1
+				}
+	     	} else {
+	 	    	shadow = shadow_sample_bilinear(depth_texture, v_shadow_position.xy, v_shadow_position.z, BIAS)
+	     	}
+		}
 
- 	Some_Enum :: enum {
+		Some_Enum :: enum {
 	
- 	}
+	 	}
 
- 	Some_Bit_Set :: bit_set[Some_Enum; u32]
+	 	Some_Bit_Set :: bit_set[Some_Enum; u32]
 
- 	bits: Some_Bit_Set
+	 	bits: Some_Bit_Set
 
- 	lighting := clamp(dot(v_normal, shadow_uniforms.light_direction), 0, 1)
- 	f_color   = (0.2 + 0.8 * lighting * f32(1 - shadow)) * texture[v_tex_coords]
- 	return aces_approx(f_color)
- }
+		lighting := clamp(dot(v_normal, shadow_uniforms.light_direction), 0, 1)
+		f_color   = (0.2 + 0.8 * lighting * f32(1 - shadow)) * texture[v_tex_coords]
+		return aces_approx(f_color)
+	}
 }
