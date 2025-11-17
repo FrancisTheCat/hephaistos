@@ -221,7 +221,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		}
 		return_index := 0
 		for e in v.values {
-			value := check_expr(checker, e)
+			value := check_expr(checker, e, type_hint = proc_type.returns[return_index].type)
 			if return_index >= len(proc_type.returns) {
 				continue
 			}
