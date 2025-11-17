@@ -60,6 +60,7 @@ builtin_names: [ast.Builtin_Id]string = {
 	.Cos          = "cos",
 	.Tan          = "tan",
 	.Normalize    = "normalize",
+	.Length       = "length",
 	.Exp          = "exp",
 	.Log          = "log",
 	.Exp2         = "exp2",
@@ -1705,18 +1706,21 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				v.args[1].value.type = type
 				operand.mode = .RValue
 				operand.type = type
-			case .Normalize:
+			case .Normalize, .Length:
 				if len(v.args) != 1 {
-					error(checker, v, "builtin 'normalize' expects one argument, got %d", len(v.args))
+					error(checker, v, "builtin '%d' expects one argument, got %d", builtin_names[v.builtin], len(v.args))
 					return
 				}
-				v := args[0]
-				if !types.is_vector(v.type) || !types.is_float(v.type.variant.(^types.Vector).elem) {
-					error(checker, v, "builtin 'normalize' expects a vector of floats, got %v", v.type)
+				x := args[0]
+				if !types.is_vector(x.type) || !types.is_float(x.type.variant.(^types.Vector).elem) {
+					error(checker, x, "builtin '%d' expects a vector of floats, got %v", builtin_names[v.builtin], x.type)
 					return
 				}
 				operand.mode = .RValue
-				operand.type = v.type
+				operand.type = x.type
+				if v.builtin == .Length {
+					operand.type = types.vector_elem(x.type)
+				}
 			case .Distance:
 				if len(v.args) != 2 {
 					error(checker, v, "builtin 'distance' expects two arguments, got %d", len(v.args))

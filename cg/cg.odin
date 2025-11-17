@@ -1364,6 +1364,9 @@ _cg_expr :: proc(
 			case .Normalize:
 				v := cg_expr(ctx, builder, v.args[0].value)
 				return { id = spv_glsl.OpNormalize(builder, cg_type(ctx, v.type).type, v.id), }
+			case .Length:
+				v := cg_expr(ctx, builder, v.args[0].value)
+				return { id = spv_glsl.OpLength(builder, cg_type(ctx, v.type).type, v.id), }
 			case .Distance:
 				a := cg_expr(ctx, builder, v.args[0].value).id
 				b := cg_expr(ctx, builder, v.args[1].value).id
