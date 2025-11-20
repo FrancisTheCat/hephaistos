@@ -97,20 +97,41 @@ main :: proc() {
 		return
 	}
 
+	os.write_entire_file("a.spv", slice.to_bytes(code))
+
 	ctx := spv_tools.context_create(.Vulkan_1_4)
 	defer spv_tools.context_destroy(ctx)
 
-	options := spv_tools.validator_options_create()
-	defer spv_tools.validator_options_destroy(options)
-	spv_tools.validator_options_set_relax_block_layout(options, true)
-	spv_tools.validator_options_set_scalar_block_layout(options, true)
+	{
+		options := spv_tools.validator_options_create()
+		defer spv_tools.validator_options_destroy(options)
+		spv_tools.validator_options_set_relax_block_layout(options, true)
+		spv_tools.validator_options_set_scalar_block_layout(options, true)
 
-	diagnostic: ^spv_tools.Diagnostic
-	spv_tools.validate_with_options(ctx, options, code, &diagnostic)
-	if diagnostic != nil {
-		spv_tools.diagnostic_print(diagnostic)
-		spv_tools.diagnostic_destroy(diagnostic)
+		diagnostic: ^spv_tools.Diagnostic
+		spv_tools.validate_with_options(ctx, options, code, &diagnostic)
+		if diagnostic != nil {
+			spv_tools.diagnostic_print(diagnostic)
+			spv_tools.diagnostic_destroy(diagnostic)
+		}
 	}
 
-	os.write_entire_file("a.spv", slice.to_bytes(code))
+	options := spv_tools.optimizer_options_create()
+	defer spv_tools.optimizer_options_destroy(options)
+
+	spv_tools.optimizer_options_set_run_validator(options, false)
+
+	spv_tools.optimizer_options_set_preserve_bindings(options, true)
+	spv_tools.optimizer_options_set_preserve_spec_constants(options, true)
+
+	optimizer := spv_tools.optimizer_create(.Vulkan_1_4)
+	defer spv_tools.optimizer_destroy(optimizer)
+
+	spv_tools.optimizer_register_performance_passes(optimizer)
+
+	binary: ^spv_tools.Binary
+	result := spv_tools.optimizer_run(optimizer, raw_data(code), len(code), &binary, options)
+	assert(result == .Success)
+
+	os.write_entire_file("opt.spv", slice.to_bytes(binary^))
 }
