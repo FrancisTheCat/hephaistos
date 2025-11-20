@@ -138,6 +138,7 @@ Builtin_Id :: enum {
 	Abs,
 
 	Texture_Size,
+	Image_Size,
 
 	Discard,
 

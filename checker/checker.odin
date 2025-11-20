@@ -77,6 +77,7 @@ builtin_names: [ast.Builtin_Id]string = {
 	.Abs          = "abs",
 
 	.Texture_Size = "texture_size",
+	.Image_Size   = "image_size",
 
 	.Discard      = "discard",
 
@@ -1767,6 +1768,18 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				if args[0].type.kind != .Sampler {
 					error(checker, v, "builtin 'texture_size' expects a sampler, got %v", args[0].type)
+					return
+				}
+				sampler     := args[0].type.variant.(^types.Image)
+				operand.type = types.vector_new(types.t_i32, sampler.dimensions, checker.allocator)
+				operand.mode = .RValue
+			case .Image_Size:
+				if len(v.args) != 1 {
+					error(checker, v, "builtin 'image_size' expects one argument, got %d", len(v.args))
+					return
+				}
+				if args[0].type.kind != .Image {
+					error(checker, v, "builtin 'image_size' expects a sampler, got %v", args[0].type)
 					return
 				}
 				sampler     := args[0].type.variant.(^types.Image)

@@ -1503,6 +1503,16 @@ _cg_expr :: proc(
 					lod = cg_expr(ctx, builder, v.args[1].value).id
 				}
 				return { id = spv.OpImageQuerySizeLod(builder, cg_type(ctx, v.type).type, image, lod), }
+			case .Image_Size:
+				ctx.capabilities[.ImageQuery] = {}
+				image := cg_expr(ctx, builder, v.args[0].value).id
+				lod: spv.Id
+				if len(v.args) == 1 {
+					lod = cg_constant(ctx, i64(0)).id
+				} else {
+					lod = cg_expr(ctx, builder, v.args[1].value).id
+				}
+				return { id = spv.OpImageQuerySizeLod(builder, cg_type(ctx, v.type).type, image, lod), }
 			}
 		case v.is_cast:
 			return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type), }
