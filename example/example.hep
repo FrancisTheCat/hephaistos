@@ -34,8 +34,13 @@ vertex_main :: proc(
 	return
 }
 
-@(binding = 1)
+@(binding = 3)
 img: image[2][2]f32
+
+@(binding = 4)
+some_buffer: []struct {
+	a, b: [4]f32,
+}
 
 /* FRAGMENT SHADER */
 
@@ -106,6 +111,8 @@ when SHADOW_PASS {
 	) -> (
 		f_color: [3]f32 @ 0,
 	) {
+		b := some_buffer[69]
+
 		img[0] = 1
 		texel := img[0]
 

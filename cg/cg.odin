@@ -543,6 +543,7 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) 
 
 	switch type.kind {
 	case .Uint:
+		assert(type.size != 0)
 		info.type = spv.OpTypeInt(&ctx.types, u32(type.size * 8), 0)
 		cap: spv.Capability
 		switch type.size {
@@ -557,6 +558,7 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) 
 			ctx.capabilities[cap] = {}
 		}
 	case .Int:
+		assert(type.size != 0)
 		info.type = spv.OpTypeInt(&ctx.types, u32(type.size * 8), 1)
 		cap: spv.Capability
 		switch type.size {
@@ -571,6 +573,7 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) 
 			ctx.capabilities[cap] = {}
 		}
 	case .Float:
+		assert(type.size != 0)
 		info.type = spv.OpTypeFloat(&ctx.types, u32(type.size * 8))
 		cap: spv.Capability
 		switch type.size {

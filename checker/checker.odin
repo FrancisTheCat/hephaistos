@@ -2001,6 +2001,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 	case ^ast.Expr_Index:
 		lhs := check_expr(checker, v.lhs)
 		rhs := check_expr(checker, v.rhs)
+		v.rhs.type = types.default_type(rhs.type)
 
 		operand.mode = lhs.mode
 		operand.type = types.t_invalid
@@ -2226,16 +2227,17 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				offset = mem.align_forward_int(offset, type.align)
 			}
 
+			align = max(align, type.align)
 			for i in start ..< i {
 				append(&fields, types.Field {
 					name   = v.fields[i].ident,
 					type   = type,
 					offset = offset,
 				})
-			}
 
-			offset += type.size
-			align   = max(align, type.align)
+				offset += type.size
+				offset  = mem.align_forward_int(offset, align)
+			}
 		}
 
 		offset = mem.align_forward_int(offset, align)
