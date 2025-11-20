@@ -123,7 +123,7 @@ when SHADOW_PASS {
 		}
 
 		f: f32
-		f = f %% 10
+		f = f % 10
 
 	 	Some_Bit_Set :: bit_set[Some_Enum; u32]
 
