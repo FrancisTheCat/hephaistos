@@ -30,7 +30,7 @@ CG_Storage_Class :: enum {
 CG_Type_Info :: struct {
 	type:       spv.Id,
 	nil_value:  spv.Id,
-	image_type: spv.Id,
+	image_type: spv.Id, // for sampler types: the type of the sampled image
 	array_type: spv.Id,
 	array_ptr:  spv.Id,
 	ptr_types:  [CG_Storage_Class]spv.Id,
@@ -51,18 +51,17 @@ CG_Image_Type :: struct {
 		size: int,
 		kind: types.Kind,
 	},
-}
-
-Cached_Image_Type :: struct {
-	image:   spv.Id,
-	sampler: spv.Id,
+	sampled: bool,
 }
 
 CG_Context :: struct {
 	constant_cache:     map[types.Const_Value]struct{ id: spv.Id, type: ^types.Type, },
 	string_cache:       map[string]spv.Id,
 	type_registry:      Type_Registry,
-	image_types:        map[CG_Image_Type]Cached_Image_Type,
+	image_types:        map[CG_Image_Type]struct {
+		image:   spv.Id,
+		sampler: spv.Id,
+	},
 
 	meta:               spv.Builder,
 	extensions:         spv.Builder,
@@ -101,6 +100,7 @@ CG_Value :: struct {
 	swizzle:         []u32,
 	explicit_layout: bool,
 	discard:         bool,
+	coord:           spv.Id, // texel reference for ImageStore
 }
 
 CG_Scope :: struct {
@@ -205,6 +205,7 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 	storage_class     := CG_Storage_Class.Function
 	spv_storage_class := spv.StorageClass.Function
 	has_nil_value     := true
+	annotate          := false
 	flags: CG_Type_Flags
 
 	if global {
@@ -223,6 +224,7 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 			spv_storage_class = .Uniform
 			flags             = { .Block, .Explicit_Layout, }
 			has_nil_value     = false
+			annotate          = true
 		}
 
 		if v.push_constant {
@@ -252,12 +254,14 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 					storage_class     := storage_class
 					spv_storage_class := spv_storage_class
 					has_nil_value     := has_nil_value
+					annotate          := annotate
 
 					if types.is_sampler(type) || types.is_image(type) {
 						assert(global)
 						storage_class     = .Uniform_Constant
 						spv_storage_class = .UniformConstant
 						has_nil_value     = false
+						annotate          = true
 					}
 					if types.is_buffer(type) {
 						assert(global)
@@ -265,6 +269,7 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 						spv_storage_class = .StorageBuffer
 						flags             = { .Block, .Explicit_Layout, }
 						has_nil_value     = false
+						annotate          = true
 					}
 
 					type_info := cg_type(ctx, type, flags)
@@ -276,7 +281,7 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 					name := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
 					cg_insert_entity(ctx, name, storage_class, type, id)
 
-					if v.uniform || types.is_sampler(type) || types.is_buffer(type) {
+					if annotate {
 						if v.binding != -1 {
 							spv.OpDecorate(&ctx.annotations, id, .Binding, u32(v.binding))
 						}
@@ -634,14 +639,12 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) 
 				size = sampled_type.size,
 				kind = sampled_type.kind,
 			},
+			sampled = true,
 		}
 
-		if cached, ok := &ctx.image_types[image_type]; ok {
+		if cached, ok := ctx.image_types[image_type]; ok {
 			info.image_type = cached.image
-			if cached.sampler == 0 {
-				cached.sampler = spv.OpTypeSampledImage(&ctx.types, info.image_type)
-			}
-			info.type = cached.sampler
+			info.type       = cached.sampler
 			break
 		}
 
@@ -663,6 +666,7 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) 
 				size = texel_type.size,
 				kind = texel_type.kind,
 			},
+			sampled = false,
 		}
 
 		if cached, ok := ctx.image_types[image_type]; ok {
@@ -670,7 +674,7 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) 
 			break
 		}
 
-		info.type = spv.OpTypeImage(&ctx.types, cg_type(ctx, texel_type).type, spv.Dim(type.dimensions - 1), 0, 0, 0, 1, .Unknown)
+		info.type = spv.OpTypeImage(&ctx.types, cg_type(ctx, texel_type).type, spv.Dim(type.dimensions - 1), 0, 0, 0, 2, .Unknown)
 		ctx.image_types[image_type] = { image = info.type, }
 	case .Buffer:
 		type := type.variant.(^types.Buffer)
@@ -838,6 +842,38 @@ cg_deref :: proc(ctx: ^CG_Context, builder: ^spv.Builder, value: CG_Value) -> sp
 		return spv.OpCompositeConstruct(builder, cg_type(ctx, value.type).type, ..members[:])
 	}
 	#partial switch value.storage_class {
+	case .Image:
+		ctx.capabilities[.StorageImageReadWithoutFormat] = {}
+
+		texel_type: ^types.Type
+		vector_len: int
+		if types.is_numeric(value.type) {
+			vector_len = 1
+			texel_type = types.vector_new(value.type, 4, context.temp_allocator)
+		} else if types.is_vector(value.type) {
+			vector_len = types.vector_len(value.type)
+			if vector_len == 4 {
+				texel_type = value.type
+			} else {
+				texel_type = types.vector_new(types.vector_elem(value.type), 4, context.temp_allocator)
+			}
+		} else {
+			panic("")
+		}
+		texel := spv.OpImageRead(builder, cg_type(ctx, texel_type).type, value.id, value.coord)
+		switch vector_len {
+		case 1:
+			return spv.OpCompositeExtract(builder, cg_type(ctx, value.type).type, texel, 0)
+		case 2:
+			indices := [2]u32{ 0, 1, }
+			return spv.OpVectorShuffle(builder, cg_type(ctx, value.type).type, texel, texel, ..indices[:])
+		case 3:
+			indices := [3]u32{ 0, 1, 2, }
+			return spv.OpVectorShuffle(builder, cg_type(ctx, value.type).type, texel, texel, ..indices[:])
+		case 4:
+			return texel
+		}
+		return texel
 	case nil:
 		return value.id
 	case:
@@ -1277,7 +1313,7 @@ _cg_expr :: proc(
 				return value
 			}
 
-			return { id = spv.OpVectorExtractDynamic(builder, cg_type(ctx, t).type, lhs.id, cg_constant(ctx, i64(indices[0])).id), type = t, }
+			return { id = spv.OpCompositeExtract(builder, cg_type(ctx, t).type, lhs.id, indices[0]), type = t, }
 		}
 
 		return {
@@ -1587,7 +1623,7 @@ _cg_expr :: proc(
 			
 			switch count {
 			case 1:
-				return { id = spv.OpVectorExtractDynamic(builder, cg_type(ctx, v.type).type, texel, cg_constant(ctx, i64(0)).id), }
+				return { id = spv.OpCompositeExtract(builder, cg_type(ctx, v.type).type, texel, 0), }
 			case 2:
 				indices := [2]u32{ 0, 1, }
 				return { id = spv.OpVectorShuffle(builder, cg_type(ctx, v.type).type, texel, texel, ..indices[:]), }
@@ -1614,25 +1650,9 @@ _cg_expr :: proc(
 
 			return {
 				storage_class = .Image,
-				// image         = cg_deref(ctx, builder, lhs),
-				// coord         = rhs.id,
+				id            = cg_deref(ctx, builder, lhs),
+				coord         = rhs.id,
 			}
-
-			// image := cg_deref(ctx, builder, lhs)
-			// texel := spv.OpImageTexelPointer(builder, cg_type_ptr(ctx, texel_type, .Image), image, rhs.id, cg_constant(ctx, 0).id)
-			
-			// switch count {
-			// case 1:
-			// 	return { id = spv.OpVectorExtractDynamic(builder, cg_type(ctx, v.type).type, texel, cg_constant(ctx, i64(0)).id), }
-			// case 2:
-			// 	indices := [2]u32{ 0, 1, }
-			// 	return { id = spv.OpVectorShuffle(builder, cg_type(ctx, v.type).type, texel, texel, ..indices[:]), }
-			// case 3:
-			// 	indices := [3]u32{ 0, 1, 2, }
-			// 	return { id = spv.OpVectorShuffle(builder, cg_type(ctx, v.type).type, texel, texel, ..indices[:]), }
-			// case 4:
-			// 	return { id = texel, }
-			// }
 		}
 
 		if types.is_buffer(lhs.type) {
@@ -2015,6 +2035,11 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 				}
 				if len(lhs.swizzle) != 0 {
 					unimplemented()
+				}
+				if lhs.storage_class == .Image {
+					ctx.capabilities[.StorageImageWriteWithoutFormat] = {}
+					spv.OpImageWrite(builder, lhs.id, lhs.coord, rhs.id)
+					continue
 				}
 				if v.op == nil {
 					spv.OpStore(builder, lhs.id, cg_cast(ctx, builder, rhs, lhs.type))
