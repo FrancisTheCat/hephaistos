@@ -61,5 +61,8 @@ When using Hephaistos with OpenGL you will have to specify the SPIR-V version as
 hephaistos.compile_shader(..., spirv_version = hephaistos.SPIR_V_VERSION_1_0, ...)
 ```
 
+## Vulkan
+When using Hephaistos with Vulkan the "scalarBlockLayout" feature needs to be enabled for the physical device (standardized in 1.2, available as an extension otherwise; As of 1.4 support for scalarBlockLayout is required).
+
 # Special Thanks
 Without [Ginger Bill](https://github.com/gingerBill/) there is no world where this compiler would exist. A huge thank you for writing the Odin compiler and also for writing [titania](https://github.com/gingerBill/titania), the most readable compiler I have ever seen.
