@@ -210,10 +210,11 @@ Type_Import :: struct {
 	ident:      tokenizer.Token,
 }
 
-Type_Sampler :: struct {
+Type_Image :: struct {
 	using node: Expr,
 	dimensions: ^Expr,
 	texel_type: ^Expr,
+	is_sampler: bool,
 }
 
 Type_Enum :: struct {
@@ -353,7 +354,7 @@ Any_Node :: union {
 	^Type_Struct,
 	^Type_Array,
 	^Type_Matrix,
-	^Type_Sampler,
+	^Type_Image,
 	^Type_Enum,
 	^Type_Bit_Set,
 
@@ -393,7 +394,7 @@ Any_Expr :: union {
 	^Type_Struct,
 	^Type_Array,
 	^Type_Matrix,
-	^Type_Sampler,
+	^Type_Image,
 	^Type_Enum,
 	^Type_Bit_Set,
 }

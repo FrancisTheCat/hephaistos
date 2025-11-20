@@ -57,7 +57,7 @@ Proc :: struct {
 	return_type: ^Type,
 }
 
-Sampler :: struct {
+Image :: struct {
 	using base: Type,
 	dimensions: int,
 	texel_type: ^Type,
@@ -89,6 +89,7 @@ Kind :: enum {
 	Buffer,
 	Proc,
 	Sampler,
+	Image,
 	Enum,
 	Bit_Set,
 
@@ -105,7 +106,7 @@ Type :: struct {
 		^Vector,
 		^Buffer,
 		^Proc,
-		^Sampler,
+		^Image,
 		^Enum,
 		^Bit_Set,
 	},
@@ -234,8 +235,12 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 		}
 		fmt.wprint(w, ")")
 	case .Sampler:
-		type := type.variant.(^Sampler)
+		type := type.variant.(^Image)
 		fmt.wprintf(w, "sampler[%d]", type.dimensions)
+		print_writer(w, type.texel_type)
+	case .Image:
+		type := type.variant.(^Image)
+		fmt.wprintf(w, "image[%d]", type.dimensions)
 		print_writer(w, type.texel_type)
 	case .Bit_Set:
 		type := type.variant.(^Bit_Set)
@@ -341,9 +346,9 @@ equal :: proc(a, b: ^Type) -> bool {
 
 		return true
 
-	case .Sampler:
-		a := a.variant.(^Sampler)
-		b := b.variant.(^Sampler)
+	case .Sampler, .Image:
+		a := a.variant.(^Image)
+		b := b.variant.(^Image)
 
 		if a.dimensions != b.dimensions {
 			return false
@@ -566,7 +571,7 @@ type_hash :: proc(type: ^Type, seed: u64 = 0xcbf29ce484222325) -> u64 {
 		for field in v.returns {
 			h = type_hash(field.type, h)
 		}
-	case ^Sampler:
+	case ^Image:
 		h = type_hash(v.texel_type, h)
 		h = hash.fnv64a(to_bytes(&v.dimensions), h)
 	case ^Enum:
@@ -691,11 +696,23 @@ buffer_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Buffer {
 }
 
 @(require_results)
-sampler_new :: proc(texel_type: ^Type, dimensions: int, allocator: mem.Allocator) -> ^Sampler {
+sampler_new :: proc(texel_type: ^Type, dimensions: int, allocator: mem.Allocator) -> ^Image {
 	assert(texel_type      != nil)
 	assert(texel_type.size != 0 || texel_type.kind == .Invalid)
 
-	type           := new(.Sampler, Sampler, allocator)
+	type           := new(.Sampler, Image, allocator)
+	type.texel_type = texel_type
+	type.dimensions = dimensions
+
+	return type
+}
+
+@(require_results)
+image_new :: proc(texel_type: ^Type, dimensions: int, allocator: mem.Allocator) -> ^Image {
+	assert(texel_type      != nil)
+	assert(texel_type.size != 0 || texel_type.kind == .Invalid)
+
+	type           := new(.Image, Image, allocator)
 	type.texel_type = texel_type
 	type.dimensions = dimensions
 
@@ -760,6 +777,11 @@ is_comparable :: proc(type: ^Type) -> bool{
 @(require_results)
 is_sampler :: proc(type: ^Type) -> bool {
 	return type.kind == .Sampler
+}
+
+@(require_results)
+is_image :: proc(type: ^Type) -> bool {
+	return type.kind == .Image
 }
 
 @(require_results)

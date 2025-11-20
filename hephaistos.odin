@@ -59,7 +59,7 @@ Ast_Type_Struct    :: ast.Type_Struct
 Ast_Type_Array     :: ast.Type_Array
 Ast_Type_Matrix    :: ast.Type_Matrix
 Ast_Type_Import    :: ast.Type_Import
-Ast_Type_Sampler   :: ast.Type_Sampler
+Ast_Type_Image     :: ast.Type_Image
 Ast_Type_Enum      :: ast.Type_Enum
 
 Ast_Decl_Value     :: ast.Decl_Value

@@ -1760,7 +1760,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					error(checker, v, "builtin 'texture_size' expects a sampler, got %v", args[0].type)
 					return
 				}
-				sampler     := args[0].type.variant.(^types.Sampler)
+				sampler     := args[0].type.variant.(^types.Image)
 				operand.type = types.vector_new(types.t_i32, sampler.dimensions, checker.allocator)
 				operand.mode = .RValue
 			}
@@ -1980,25 +1980,25 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		lhs := check_expr(checker, v.lhs)
 		rhs := check_expr(checker, v.rhs)
 
-		result_type := types.t_invalid
+		operand.mode = lhs.mode
 		#partial switch lhs.type.kind {
 		case .Matrix:
 			if !types.is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			result_type = lhs.type.variant.(^types.Matrix).col_type
+			operand.type = lhs.type.variant.(^types.Matrix).col_type
 		case .Vector:
 			if !types.is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			result_type = lhs.type.variant.(^types.Vector).elem
+			operand.type = lhs.type.variant.(^types.Vector).elem
 		case .Buffer:
 			if !types.is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			result_type = lhs.type.variant.(^types.Buffer).elem
+			operand.type = lhs.type.variant.(^types.Buffer).elem
 		case .Sampler:
-			sampler := lhs.type.variant.(^types.Sampler)
+			sampler := lhs.type.variant.(^types.Image)
 			if sampler.dimensions == 1 {
 				if !types.is_numeric(rhs.type) {
 					error(
@@ -2022,16 +2022,43 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 			}
 
-			result_type = sampler.texel_type
+			operand.type = sampler.texel_type
+			operand.mode = .RValue
+		case .Image:
+			image := lhs.type.variant.(^types.Image)
+			if image.dimensions == 1 {
+				if !types.is_integer(rhs.type) {
+					error(
+						checker,
+						rhs,
+						"expected an integer to access texel from image of type %v, got: %v",
+						image,
+						rhs.type,
+					)
+				}
+			} else {
+				if types.is_integer(rhs.type) {
+					v.rhs.type = types.vector_new(types.default_type(rhs.type), image.dimensions, checker.allocator)
+				} else if !types.is_vector(rhs.type) || !types.is_numeric(types.vector_elem(rhs.type)) || rhs.type.variant.(^types.Vector).count != image.dimensions {
+					error(
+						checker,
+						rhs,
+						"expected a %d dimensional vector of integers to access texel from image of type %v, got: %v",
+						image.dimensions,
+						image,
+						rhs.type,
+					)
+				}
+			}
+
+			operand.type = image.texel_type
+			operand.mode = .LValue
 		}
 
-		if result_type.kind == .Invalid {
+		if operand.type.kind == .Invalid {
 			error(checker, v, "expression of type %v can not be indexed", lhs.type)
 			return
 		}
-
-		operand.type = result_type
-		operand.mode = lhs.mode
 		
 	case ^ast.Expr_Cast:
 		value       := check_expr(checker, v.value)
@@ -2259,7 +2286,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		}
 		operand.type = type
 		operand.mode = .Type
-	case ^ast.Type_Sampler:
+	case ^ast.Type_Image:
 		dimensions := check_expr(checker, v.dimensions)
 		if dim, ok := dimensions.value.(i64); ok {
 			if dim < 1 || dim > 3 {
@@ -2271,7 +2298,11 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				error(checker, v.texel_type, "texel type of sampler has to be either a numeric type or a vector, got: %v", texel_type)
 				return
 			}
-			operand.type = types.sampler_new(texel_type, int(dim), checker.allocator)
+			if v.is_sampler {
+				operand.type = types.sampler_new(texel_type, int(dim), checker.allocator)
+			} else {
+				operand.type = types.image_new(texel_type, int(dim), checker.allocator)
+			}
 			operand.mode = .Type
 		} else {
 			error(checker, dimensions, "expected a constant integer as the dimension of a sampler")

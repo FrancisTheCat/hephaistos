@@ -24,6 +24,7 @@ CG_Storage_Class :: enum {
 	Push_Constant,
 	Uniform_Constant,
 	Storage_Buffer,
+	Image,
 }
 
 CG_Type_Info :: struct {
@@ -46,17 +47,22 @@ Type_Registry :: [][dynamic]Type_Hash_Entry
 
 CG_Image_Type :: struct {
 	dimensions:   int,
-	sampled_type: struct {
+	texel_type: struct {
 		size: int,
 		kind: types.Kind,
 	},
+}
+
+Cached_Image_Type :: struct {
+	image:   spv.Id,
+	sampler: spv.Id,
 }
 
 CG_Context :: struct {
 	constant_cache:     map[types.Const_Value]struct{ id: spv.Id, type: ^types.Type, },
 	string_cache:       map[string]spv.Id,
 	type_registry:      Type_Registry,
-	image_types:        map[CG_Image_Type][2]spv.Id,
+	image_types:        map[CG_Image_Type]Cached_Image_Type,
 
 	meta:               spv.Builder,
 	extensions:         spv.Builder,
@@ -198,6 +204,7 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 	decl_builder      := &ctx.functions
 	storage_class     := CG_Storage_Class.Function
 	spv_storage_class := spv.StorageClass.Function
+	has_nil_value     := true
 	flags: CG_Type_Flags
 
 	if global {
@@ -215,6 +222,7 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 			storage_class     = .Uniform
 			spv_storage_class = .Uniform
 			flags             = { .Block, .Explicit_Layout, }
+			has_nil_value     = false
 		}
 
 		if v.push_constant {
@@ -223,6 +231,7 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 			storage_class     = .Push_Constant
 			spv_storage_class = .PushConstant
 			flags             = { .Block, .Explicit_Layout, }
+			has_nil_value     = false
 		}
 
 		prev_link_name := ctx.link_name
@@ -242,22 +251,25 @@ cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global
 				for type, i in v.types {
 					storage_class     := storage_class
 					spv_storage_class := spv_storage_class
+					has_nil_value     := has_nil_value
 
-					if types.is_sampler(type) {
+					if types.is_sampler(type) || types.is_image(type) {
 						assert(global)
 						storage_class     = .Uniform_Constant
 						spv_storage_class = .UniformConstant
+						has_nil_value     = false
 					}
 					if types.is_buffer(type) {
 						assert(global)
 						storage_class     = .Storage_Buffer
 						spv_storage_class = .StorageBuffer
 						flags             = { .Block, .Explicit_Layout, }
+						has_nil_value     = false
 					}
 
 					type_info := cg_type(ctx, type, flags)
 					init: Maybe(spv.Id)
-					if !v.uniform && !v.push_constant && !types.is_sampler(type) && !types.is_buffer(type) {
+					if has_nil_value {
 						init = cg_nil_value(ctx, type_info)
 					}
 					id   := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
@@ -491,6 +503,8 @@ cg_type_ptr_from_type :: proc(ctx: ^CG_Context, type_info: ^CG_Type_Info, storag
 			spv_storage_class = .UniformConstant
 		case .Storage_Buffer:
 			spv_storage_class = .StorageBuffer
+		case .Image:
+			spv_storage_class = .Image
 		}
 		type_info.ptr_types[storage_class] = spv.OpTypePointer(&ctx.types, spv_storage_class, type_info.type)
 	}
@@ -606,7 +620,7 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) 
 		}
 		info.type = spv.OpTypeFunction(&ctx.types, cg_type(ctx, type.return_type).type, ..args)
 	case .Sampler:
-		type := type.variant.(^types.Sampler)
+		type := type.variant.(^types.Image)
 		sampled_type: ^types.Type
 		if types.is_numeric(type.texel_type) {
 			sampled_type = type.texel_type
@@ -615,22 +629,49 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) 
 			sampled_type = type.texel_type.variant.(^types.Vector).elem
 		}
 		image_type := CG_Image_Type {
-			dimensions   = type.dimensions,
-			sampled_type = {
+			dimensions = type.dimensions,
+			texel_type = {
 				size = sampled_type.size,
 				kind = sampled_type.kind,
 			},
 		}
 
-		if cached, ok := ctx.image_types[image_type]; ok {
-			info.image_type = cached[0]
-			info.type       = cached[1]
+		if cached, ok := &ctx.image_types[image_type]; ok {
+			info.image_type = cached.image
+			if cached.sampler == 0 {
+				cached.sampler = spv.OpTypeSampledImage(&ctx.types, info.image_type)
+			}
+			info.type = cached.sampler
 			break
 		}
 
 		info.image_type = spv.OpTypeImage(&ctx.types, cg_type(ctx, sampled_type).type, spv.Dim(type.dimensions - 1), 0, 0, 0, 1, .Unknown)
 		info.type       = spv.OpTypeSampledImage(&ctx.types, info.image_type)
 		ctx.image_types[image_type] = { info.image_type, info.type, }
+	case .Image:
+		type := type.variant.(^types.Image)
+		texel_type: ^types.Type
+		if types.is_numeric(type.texel_type) {
+			texel_type = type.texel_type
+		} else {
+			assert(types.is_vector(type.texel_type))
+			texel_type = type.texel_type.variant.(^types.Vector).elem
+		}
+		image_type := CG_Image_Type {
+			dimensions = type.dimensions,
+			texel_type = {
+				size = texel_type.size,
+				kind = texel_type.kind,
+			},
+		}
+
+		if cached, ok := ctx.image_types[image_type]; ok {
+			info.type = cached.image
+			break
+		}
+
+		info.type = spv.OpTypeImage(&ctx.types, cg_type(ctx, texel_type).type, spv.Dim(type.dimensions - 1), 0, 0, 0, 1, .Unknown)
+		ctx.image_types[image_type] = { image = info.type, }
 	case .Buffer:
 		type := type.variant.(^types.Buffer)
 		elem := cg_type(ctx, type.elem, { .Explicit_Layout, })
@@ -1529,7 +1570,7 @@ _cg_expr :: proc(
 		}
 
 		if types.is_sampler(lhs.type) {
-			sampler    := lhs.type.variant.(^types.Sampler)
+			sampler    := lhs.type.variant.(^types.Image)
 			count      := 1
 			texel_type := sampler.texel_type
 			if v, ok := sampler.texel_type.variant.(^types.Vector); ok {
@@ -1556,6 +1597,42 @@ _cg_expr :: proc(
 			case 4:
 				return { id = texel, }
 			}
+		}
+
+		if types.is_image(lhs.type) {
+			sampler    := lhs.type.variant.(^types.Image)
+			count      := 1
+			texel_type := sampler.texel_type
+			if v, ok := sampler.texel_type.variant.(^types.Vector); ok {
+				count = v.count
+				if v.count != 4 {
+					texel_type = types.vector_new(v.elem, 4, context.temp_allocator)
+				}
+			} else {
+				texel_type = types.vector_new(sampler.texel_type, 4, context.temp_allocator)
+			}
+
+			return {
+				storage_class = .Image,
+				// image         = cg_deref(ctx, builder, lhs),
+				// coord         = rhs.id,
+			}
+
+			// image := cg_deref(ctx, builder, lhs)
+			// texel := spv.OpImageTexelPointer(builder, cg_type_ptr(ctx, texel_type, .Image), image, rhs.id, cg_constant(ctx, 0).id)
+			
+			// switch count {
+			// case 1:
+			// 	return { id = spv.OpVectorExtractDynamic(builder, cg_type(ctx, v.type).type, texel, cg_constant(ctx, i64(0)).id), }
+			// case 2:
+			// 	indices := [2]u32{ 0, 1, }
+			// 	return { id = spv.OpVectorShuffle(builder, cg_type(ctx, v.type).type, texel, texel, ..indices[:]), }
+			// case 3:
+			// 	indices := [3]u32{ 0, 1, 2, }
+			// 	return { id = spv.OpVectorShuffle(builder, cg_type(ctx, v.type).type, texel, texel, ..indices[:]), }
+			// case 4:
+			// 	return { id = texel, }
+			// }
 		}
 
 		if types.is_buffer(lhs.type) {
@@ -1616,7 +1693,7 @@ _cg_expr :: proc(
 		then_value := cg_expr(ctx, builder, v.then_expr).id
 		else_value := cg_expr(ctx, builder, v.else_expr).id
 		return { id = spv.OpSelect(builder, cg_type(ctx, v.type).type, cond, then_value, else_value), }
-	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Import, ^ast.Type_Sampler, ^ast.Type_Enum, ^ast.Type_Bit_Set:
+	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Import, ^ast.Type_Image, ^ast.Type_Enum, ^ast.Type_Bit_Set:
 		panic("tried to cg type as expression")
 	case ^ast.Expr_Config:
 		panic("tried to cg config var as expression")
