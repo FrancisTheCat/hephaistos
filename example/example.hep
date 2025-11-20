@@ -1,13 +1,15 @@
+Binding_Location :: #import(Binding_Location)
+
 SHADOW_PASS :: #config(SHADOW_PASS, false)
 
 /* VERTEX SHADER */
 
 @(push_constant)
-vs_constants: #import(Vertex_Shader_Uniforms) // imported from Odin
+vs_constants: #import(Vertex_Shader_Uniforms)
 
 when !SHADOW_PASS {
-	@(uniform, binding = 0)
-	shadow_uniforms: #import(Shadow_Uniforms) // imported from Odin
+	@(uniform, binding = Binding_Location.Shadow_Uniforms)
+	shadow_uniforms: #import(Shadow_Uniforms)
 }
 
 @(vertex_shader, link_name = "main")
@@ -34,10 +36,10 @@ vertex_main :: proc(
 	return
 }
 
-@(binding = 3)
+@(binding = Binding_Location.Image)
 img: image[2][2]f32
 
-@(binding = 4)
+@(binding = Binding_Location.Some_Buffer)
 some_buffer: []struct {
 	a, b: [4]f32,
 }
@@ -55,8 +57,10 @@ when SHADOW_PASS {
 		
 	}
 } else {
-	@(binding = 1) texture:       sampler[2][3]f32
-	@(binding = 2) depth_texture: sampler[2]f32
+	@(binding = Binding_Location.Texture)
+	texture:       sampler[2][3]f32
+	@(binding = Binding_Location.Depth_Texture)
+	depth_texture: sampler[2]f32
 
 	shadow_sample_bilinear :: proc(tex: sampler[2]f32, coords: [2]f32, current_depth, bias: f32) -> f32 {
 		tex_size     := ([2]f32)(texture_size(tex))

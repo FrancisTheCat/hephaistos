@@ -54,6 +54,14 @@ main :: proc() {
 		defer spall.buffer_destroy(&spall_ctx, &spall_buffer)
 	}
 
+	Binding_Location :: enum u64 {
+		Image,
+		Texture,
+		Depth_Texture,
+		Shadow_Uniforms,
+		Some_Buffer,
+	}
+
 	Vertex_Shader_Uniforms :: struct {
 		view, proj, model: glm.mat4,
 		normal_matrix:     glm.mat3,
@@ -84,7 +92,7 @@ main :: proc() {
 		source,
 		FILE_NAME,
 		defines         = defines,
-		shared_types    = { Vertex_Shader_Uniforms, Shadow_Uniforms, Some_Enum, Particle, },
+		shared_types    = { Vertex_Shader_Uniforms, Shadow_Uniforms, Some_Enum, Particle, Binding_Location, },
 		error_allocator = context.temp_allocator,
 	)
 	defer delete(code)
