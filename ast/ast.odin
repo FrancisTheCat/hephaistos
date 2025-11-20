@@ -245,6 +245,7 @@ Decl_Value :: struct {
 	descriptor_set: int,
 	link_name:      string,
 	local_size:     [3]i32,
+	shader_stage:   Shader_Stage,
 }
 
 Stmt_Return :: struct {

@@ -540,7 +540,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				}
 			case "local_size":
 				if a.value == nil {
-					error(checker, a.ident, "'link_name' attribute requires a value")
+					error(checker, a.ident, "'local_size' attribute requires a value")
 					break
 				}
 				if comp, ok := a.value.derived_expr.(^ast.Expr_Compound); ok {
@@ -564,9 +564,13 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				}
 			case:
 				found: bool
-				for name in ast.shader_stage_names {
+				for name, stage in ast.shader_stage_names {
 					if name == a.ident.text {
-						found = true
+						if v.shader_stage != nil {
+							error(checker, a.ident, "procedures can only be annotated with one shader stage")
+						}
+						v.shader_stage = stage
+						found          = true
 						break
 					}
 				}
@@ -574,6 +578,12 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					error(checker, a.ident, "unknown attribute '%s' in value declaration", a.ident.text)
 				}
 			}
+		}
+
+		if v.shader_stage == .Compute {
+			v.local_size = 1
+		} else if v.local_size != 0 {
+			error(checker, v, "'local_size' attribute can only be applied to compute shaders")
 		}
 
 		if v.uniform && v.push_constant {
