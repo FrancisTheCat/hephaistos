@@ -1,3 +1,6 @@
 [submodule "spirv-odin"]
 	path = spirv-odin
 	url = https://github.com/francisthecat/spirv-odin
+[submodule "example/spirv-tools-odin"]
+	path = example/spirv-tools-odin
+	url = https://github.com/francisthecat/spirv-tools-odin

@@ -12,6 +12,8 @@ import glm "core:math/linalg/glsl"
 
 import hep ".."
 
+import spv_tools "spirv-tools-odin"
+
 ENABLE_SPALL :: #config(ENABLE_SPALL, false)
 
 when ENABLE_SPALL {
@@ -93,6 +95,21 @@ main :: proc() {
 			hep.print_error(os.stream_from_handle(os.stderr), FILE_NAME, lines, error)
 		}
 		return
+	}
+
+	ctx := spv_tools.context_create(.Vulkan_1_4)
+	defer spv_tools.context_destroy(ctx)
+
+	options := spv_tools.validator_options_create()
+	defer spv_tools.validator_options_destroy(options)
+	spv_tools.validator_options_set_relax_block_layout(options, true)
+	spv_tools.validator_options_set_scalar_block_layout(options, true)
+
+	diagnostic: ^spv_tools.Diagnostic
+	spv_tools.validate_with_options(ctx, options, code, &diagnostic)
+	if diagnostic != nil {
+		spv_tools.diagnostic_print(diagnostic)
+		spv_tools.diagnostic_destroy(diagnostic)
 	}
 
 	os.write_entire_file("a.spv", slice.to_bytes(code))
