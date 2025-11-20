@@ -1183,7 +1183,6 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 	defer {
 		expr.type        = operand.type
 		expr.const_value = operand.value
-		// assert(operand.mode != .Const || expr.const_value != nil)
 	}
 
 	switch v in expr.derived_expr {
@@ -1991,6 +1990,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		rhs := check_expr(checker, v.rhs)
 
 		operand.mode = lhs.mode
+		operand.type = types.t_invalid
 		#partial switch lhs.type.kind {
 		case .Matrix:
 			if !types.is_integer(rhs.type) {
@@ -2331,6 +2331,7 @@ check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast
 	operand = check_expr_internal(checker, expr, attributes, type_hint)
 	switch operand.mode {
 	case .RValue, .LValue, .Const, .Type:
+		assert(operand.type != nil)
 		return
 	case .Builtin:
 		error(checker, operand, "expected an expression, got builtin")
@@ -2349,6 +2350,7 @@ check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 	operand = check_expr_internal(checker, expr, attributes, type_hint)
 	switch operand.mode {
 	case .RValue, .LValue, .Const:
+		assert(operand.type != nil)
 		return
 	case .Builtin:
 		error(checker, operand, "expected an expression, got builtin")
@@ -2375,6 +2377,7 @@ check_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 	case .Builtin:
 		error(checker, operand, "expected a type, got builtin")
 	case .Type:
+		assert(operand.type != nil)
 		return operand.type
 	case .NoValue:
 		error(checker, operand, "expected an expression, got no value")
