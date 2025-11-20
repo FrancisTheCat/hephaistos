@@ -19,7 +19,7 @@ Interface_Info :: struct {
 interface_infos: map[spv.BuiltIn]Interface_Info
 
 @(init)
-_builtin_infos_init :: proc "contextless" () {
+_interface_infos_init :: proc "contextless" () {
 	context = runtime.default_context()
 
 	vec4  := types.vector_new(types.t_f32, 4, context.allocator)

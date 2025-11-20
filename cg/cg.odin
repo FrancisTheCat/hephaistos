@@ -939,6 +939,8 @@ cg_expr_binary :: proc(
 				return spv.OpFSub
 			case .Multiply:
 				return spv.OpFMul
+			case .Modulo:
+				return spv.OpFMul
 			case .Divide:
 				return spv.OpFDiv
 			case .Modulo:
@@ -979,6 +981,7 @@ cg_expr_binary :: proc(
 	}
 
 	op_fn := binary_op_inst(lhs_type, rhs_type, type^, op)
+	assert(op_fn != nil)
 	return op_fn(builder, type_info.type, lhs, rhs)
 }
 
@@ -1254,9 +1257,9 @@ _cg_expr :: proc(
 			case .Invalid, .Size_Of, .Align_Of, .Type_Of:
 				fmt.panicf("invalid builtin: %v", v.builtin)
 			case .Dot:
-				t  := types.op_result_type(v.args[0].value.type, v.args[1].value.type, false, {})
-				a  := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), t)
-				b  := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), t)
+				t := types.op_result_type(v.args[0].value.type, v.args[1].value.type)
+				a := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), t)
+				b := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), t)
 				id: spv.Id
 				#partial switch t.variant.(^types.Vector).elem.kind {
 				case .Float:

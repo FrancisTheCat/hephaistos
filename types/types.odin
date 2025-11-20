@@ -401,8 +401,9 @@ implicitly_castable :: proc(from, to: ^Type) -> bool {
 }
 
 @(require_results)
-op_result_type :: proc(a, b: ^Type, is_multiply: bool, allocator: mem.Allocator) -> ^Type {
+op_result_type :: proc(a, b: ^Type, is_multiply: bool = false, allocator: mem.Allocator = {}) -> ^Type {
 	if is_multiply && (is_matrix(a) || is_matrix(b)) {
+		assert(allocator.procedure != nil)
 		return matrix_multiply_type(a, b, allocator)
 	}
 
@@ -637,14 +638,14 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 	}
 
 	if a.kind == .Float {
-		if op_result_type(a, matrix_elem_type(b), false, {}) == t_invalid {
+		if op_result_type(a, matrix_elem_type(b)) == t_invalid {
 			return t_invalid
 		}
 		return b
 	}
 
 	if b.kind == .Float {
-		if op_result_type(b, matrix_elem_type(a), false, {}) == t_invalid {
+		if op_result_type(b, matrix_elem_type(a)) == t_invalid {
 			return t_invalid
 		}
 		return a
@@ -773,14 +774,14 @@ operator_applicable :: proc(type: ^Type, op: tokenizer.Token_Kind) -> bool {
 			return true
 		case .Add, .Subtract, .Multiply, .Divide:
 			return true
+		case .Modulo, .Modulo_Floored:
+			return true
 		}
 	}
 
 	#partial switch type.kind {
 	case .Int, .Uint:
 		#partial switch op {
-		case .Modulo, .Modulo_Floored:
-			return true
 		case .Bit_Or, .Bit_And, .Xor, .Shift_Left, .Shift_Right:
 			return true
 		}

@@ -453,28 +453,32 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 }
 
 binding_powers: #sparse [tokenizer.Token_Kind]int = #partial {
-	.Question_Mark = 2,
-	.If            = 2,
+	.Question_Mark  = 2,
+	.If             = 2,
 
-	.And           = 3,
-	.Or            = 3,
+	.And            = 3,
+	.Or             = 3,
 
-	.Less          = 4,
-	.Greater       = 4,
-	.Equal         = 4,
-	.Not_Equal     = 4,
-	.Less_Equal    = 4,
-	.Greater_Equal = 4,
+	.Less           = 4,
+	.Greater        = 4,
+	.Equal          = 4,
+	.Not_Equal      = 4,
+	.Less_Equal     = 4,
+	.Greater_Equal  = 4,
 
-	.Add           = 5,
-	.Subtract      = 5,
+	.Add            = 5,
+	.Subtract       = 5,
 
-	.Bit_And       = 6,
-	.Bit_Or        = 6,
-	.Multiply      = 6,
-	.Divide        = 6,
+	.Bit_And        = 6,
+	.Bit_Or         = 6,
+	.Multiply       = 6,
+	.Divide         = 6,
+	.Shift_Left     = 6,
+	.Shift_Right    = 6,
+	.Modulo         = 6,
+	.Modulo_Floored = 6,
 
-	.Exponent      = 7,
+	.Exponent       = 7,
 }
 
 parse_expr :: proc(parser: ^Parser, min_power := 0, allow_compound_literals := true) -> (expr: ^ast.Expr, ok: bool) {

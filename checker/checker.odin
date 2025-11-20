@@ -287,7 +287,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		if !types.is_numeric(start.type) {
 			error(checker, v.end, "non-numeric type in range statment: %v", start.type)
 		}
-		iter_type        := types.op_result_type(start.type, end.type, false, checker.allocator)
+		iter_type        := types.op_result_type(start.type, end.type)
 		iter_type         = types.default_type(iter_type)
 		v.start_expr.type = iter_type
 		v.end_expr.type   = iter_type
@@ -432,7 +432,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					if !types.implicitly_castable(field.type, lhs[lhs_i].type) {
 						error(checker, v, "mismatched types in assign statement: %v vs %v", lhs[lhs_i].type, field.type)
 					}
-					v.types[lhs_i] = types.op_result_type(lhs[lhs_i].type, field.type, false, {})
+					v.types[lhs_i] = types.op_result_type(lhs[lhs_i].type, field.type)
 					lhs_i         += 1
 				}
 			} else {
@@ -440,7 +440,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					lhs_i += 1
 					continue
 				}
-				result_type := types.op_result_type(lhs[lhs_i].type, r.type, false, {})
+				result_type := types.op_result_type(lhs[lhs_i].type, r.type)
 				if !types.implicitly_castable(r.type, lhs[lhs_i].type) {
 					error(checker, v, "mismatched types in assign statement: %v vs %v", lhs[lhs_i].type, r.type)
 				}
@@ -971,6 +971,12 @@ evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: types.Const_Value,
 				return nil
 			}
 			return l % r
+		case .Modulo_Floored:
+			if r == 0 {
+				error(checker, expr, "modulo with zero")
+				return nil
+			}
+			return l %% r
 		case .Exponent:
 			unimplemented()
 		case .Less:
@@ -997,9 +1003,6 @@ evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: types.Const_Value,
 				error(checker, expr, "shift by a negative amount: %v < 0", r)
 			}
 			return l >> uint(r)
-
-		case .Modulo_Floored:
-			return l %% r
 		}
 	}
 
@@ -1230,7 +1233,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		}
 
 		if !types.operator_applicable(operand.type, v.op) {
-			error(checker, v, "operator %v is not defined in `%v %v %v`", tokenizer.to_string(v.op), lhs.type, tokenizer.to_string(v.op), rhs.type)
+			error(checker, v, "operator `%v` is not defined for `%v %v %v`", tokenizer.to_string(v.op), lhs.type, tokenizer.to_string(v.op), rhs.type)
 			return
 		}
 
@@ -1504,7 +1507,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				a    := args[0]
 				b    := args[1]
-				type := types.op_result_type(a.type, b.type, false, checker.allocator)
+				type := types.op_result_type(a.type, b.type)
 				if !types.is_vector(type) {
 					error(checker, v, "builtin 'dot' expects two vectors of the same type, got %v and %v", a.type, b.type)
 					break
@@ -1520,7 +1523,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				a    := args[0]
 				b    := args[1]
-				type := types.op_result_type(a.type, b.type, false, {})
+				type := types.op_result_type(a.type, b.type)
 				if vec, ok := type.variant.(^types.Vector); !ok || vec.count != 3 {
 					error(checker, v, "builtin 'cross' expects two 3 dimensional vectors, got %v and %v", a.type, b.type)
 					break
@@ -1537,7 +1540,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				type := args[0].type
 				for arg in args[1:] {
 					prev := type
-					type  = types.op_result_type(type, arg.type, false, {})
+					type  = types.op_result_type(type, arg.type)
 					if type.kind == .Invalid {
 						error(checker, arg, "builtin '%s' expects all arguments to be of the same type, expected %v, got %v", builtin_names[v.builtin], prev, arg.type)
 						return
@@ -1560,7 +1563,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				type := args[0].type
 				for arg in args[1:] {
 					prev := type
-					type  = types.op_result_type(type, arg.type, false, {})
+					type  = types.op_result_type(type, arg.type)
 					if type.kind == .Invalid {
 						error(checker, arg, "builtin 'clamp' expects all arguments to be of the same type, expected %v, got %v", prev, arg.type)
 						return
@@ -1581,7 +1584,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					break
 				}
 				a, b, t := args[0].type, args[1].type, args[2].type
-				type    := types.default_type(types.op_result_type(a, b, false, {}))
+				type    := types.default_type(types.op_result_type(a, b))
 				if type.kind == .Invalid {
 					error(checker, v, "type mismatch in builtin '%s': %v vs %v", builtin_names[v.builtin], a, b)
 					break
@@ -1660,7 +1663,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					break
 				}
 				arg  := args[0]
-				type := types.op_result_type(arg.type, types.t_f32, false, {})
+				type := types.op_result_type(arg.type, types.t_f32)
 				if type.kind == .Invalid || type.kind == .Matrix {
 					error(checker, v, "builtin '%s' expects a float or vector, got %v", builtin_names[v.builtin], arg.type)
 					return
@@ -1693,7 +1696,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				x         := args[0]
 				y         := args[1]
-				type      := types.op_result_type(x.type, y.type, false, {})
+				type      := types.op_result_type(x.type, y.type)
 				elem_type := type
 				if types.is_vector(type) {
 					elem_type = type.variant.(^types.Vector).elem
@@ -1727,7 +1730,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					return
 				}
 				a, b := args[0].type, args[1].type
-				type := types.op_result_type(a, b, false, {})
+				type := types.op_result_type(a, b)
 				if type.kind == .Invalid {
 					error(checker, v, "type mismatch in builtin 'distance': %v vs %v", a, b)
 					break
@@ -2047,7 +2050,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		}
 		expr := check_expr(checker, v.expr)
 		if !types.operator_applicable(expr.type, v.op) && is_valid_unary_operator(v.op) {
-			error(checker, v, "operator %v is not defined in `%v %v`", tokenizer.to_string(v.op), expr.type, tokenizer.to_string(v.op))
+			error(checker, v, "operator `%v` is not defined for `%v%v`", tokenizer.to_string(v.op), expr.type, tokenizer.to_string(v.op))
 		}
 		operand.mode  = .RValue
 		operand.type  = expr.type
@@ -2083,7 +2086,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			return
 		}
 
-		operand.type = types.default_type(types.op_result_type(then_value.type, else_value.type, false, checker.allocator))
+		operand.type = types.default_type(types.op_result_type(then_value.type, else_value.type))
 		if operand.type.kind == .Invalid {
 			error(checker, cond, "mismatched types in ternary expr: %v vs %v", then_value.type, else_value.type)
 			return
