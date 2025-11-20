@@ -768,6 +768,10 @@ operator_applicable :: proc(type: ^Type, op: tokenizer.Token_Kind) -> bool {
 		return true
 	}
 
+	if is_float(type) && op == .Modulo_Floored {
+		return false
+	}
+
 	if is_numeric(type) {
 		#partial switch op {
 		case .Less, .Less_Equal, .Greater, .Greater_Equal:
