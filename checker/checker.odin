@@ -299,7 +299,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			error(checker, v.end, "mismatched types in range stmt: %v vs %v", start.type, end.type)
 		}
 		if var, ok := v.variable.derived_expr.(^ast.Expr_Ident); ok {
-			e := entity_new(.Var, var.ident, iter_type, flags = { .Readonly, }, allocator = checker.allocator)
+			e := entity_new(.Var, var.ident, iter_type, flags = { .Readonly, .Resolved, }, allocator = checker.allocator)
 			scope_insert_entity(checker, e)
 			v.variable.type = iter_type
 		} else {
