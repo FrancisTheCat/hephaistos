@@ -28,6 +28,9 @@ entity_kind_string := [Entity_Kind]string{
 
 Entity_Flag :: enum {
 	Readonly,
+
+	In_Progress,
+	Resolved,
 }
 
 Entity_Flags :: bit_set[Entity_Flag]

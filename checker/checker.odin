@@ -28,6 +28,7 @@ Addressing_Mode :: enum {
 	NoValue,
 	LValue,
 	Const,
+	Proc,
 	Type,
 	Builtin,
 }
@@ -39,6 +40,7 @@ addressing_mode_string := [Addressing_Mode]string {
 	.RValue   = "rvalue",
 	.LValue   = "lvalue",
 	.Const    = "const",
+	.Proc     = "proc",
 	.Type     = "type",
 	.Builtin  = "builtin",
 }
@@ -355,9 +357,9 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		cond := check_expr(checker, v.cond)
 		if c, ok := cond.value.(bool); ok {
 			if c {
-				return check_stmt_list(checker, v.then_block)
+				return check_stmt_list(checker, v.then_block, true)
 			} else {
-				return check_stmt_list(checker, v.else_block)
+				return check_stmt_list(checker, v.else_block, true)
 			}
 		} else {
 			error(checker, cond, "expected a constant boolean expression in when statement condition")
@@ -464,132 +466,14 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		}
 
 	case ^ast.Decl_Value:
-		// if !v.mutable {
-		// 	break
-		// }
+		if !v.mutable {
+			break
+		}
+
+		check_decl_attributes(checker, v, false)
+
 		names  := make([]tokenizer.Token, len(v.lhs),    checker.allocator)
 		values := make([]Operand,         len(v.values), checker.allocator)
-
-		seen := make(map[string]struct{}, context.temp_allocator)
-		v.location = -1
-		v.binding  = -1
-		for a in v.attributes {
-			if a.ident.text in seen {
-				error(checker, a.ident, "duplicate attribute: '%v'", a.ident.text)
-			}
-			seen[a.ident.text] = {}
-
-			switch a.ident.text {
-			case "uniform":
-				v.uniform = true
-				if a.value != nil {
-					error(checker, a.value, "'uniform' attribute does not accept a value")
-				}
-			case "push_constant":
-				v.push_constant = true
-				if a.value != nil {
-					error(checker, a.value, "'push_constant' attribute does not accept a value")
-				}
-			case "readonly":
-				v.readonly = true
-				if a.value != nil {
-					error(checker, a.value, "'readonly' attribute does not accept a value")
-				}
-			case "binding":
-				if a.value == nil {
-					error(checker, a.ident, "'binding' attribute requires a value")
-					break
-				}
-				value := check_expr(checker, a.value)
-				if val, ok := value.value.(i64); ok {
-					v.binding = int(val)
-				} else {
-					error(checker, value, "'binding' attribute value must be a constant integer")
-				}
-			case "location":
-				if a.value == nil {
-					error(checker, a.ident, "'location' attribute requires a value")
-					break
-				}
-				value := check_expr(checker, a.value)
-				if val, ok := value.value.(i64); ok {
-					v.location = int(val)
-				} else {
-					error(checker, value, "'location' attribute value must be a constant integer")
-				}
-			case "descriptor_set":
-				if a.value == nil {
-					error(checker, a.ident, "'descriptor_set' attribute requires a value")
-					break
-				}
-				value := check_expr(checker, a.value)
-				if val, ok := value.value.(i64); ok {
-					v.descriptor_set = int(val)
-				} else {
-					error(checker, value, "'descriptor_set' attribute value must be a constant integer")
-				}
-			case "link_name":
-				if a.value == nil {
-					error(checker, a.ident, "'link_name' attribute requires a value")
-					break
-				}
-				value := check_expr(checker, a.value)
-				if val, ok := value.value.(string); ok {
-					v.link_name = val
-				} else {
-					error(checker, value, "'descriptor_set' attribute value must be a constant string")
-				}
-			case "local_size":
-				if a.value == nil {
-					error(checker, a.ident, "'local_size' attribute requires a value")
-					break
-				}
-				if comp, ok := a.value.derived_expr.(^ast.Expr_Compound); ok {
-					if len(comp.fields) != 3 {
-						error(checker, a.value, "'local_size' attribute value must be a compount literal of three constant integers")
-						break
-					}
-					for field, i in comp.fields {
-						value := check_expr(checker, field.value)
-						if x, ok := value.value.(i64); ok {
-							if x <= 0 {
-								error(checker, field.value, "'local_size' values must be positive integers, got %v", x)
-							}
-							v.local_size[i] = i32(x)
-						} else {
-							error(checker, field.value, "'local_size' values must be constant integers, got %v", value.type)
-						}
-					}
-				} else {
-					error(checker, a.value, "'local_size' attribute value must be a compount literal of three constant integers")
-				}
-			case:
-				found: bool
-				for name, stage in ast.shader_stage_names {
-					if name == a.ident.text {
-						if v.shader_stage != nil {
-							error(checker, a.ident, "procedures can only be annotated with one shader stage")
-						}
-						v.shader_stage = stage
-						found          = true
-						break
-					}
-				}
-				if !found {
-					error(checker, a.ident, "unknown attribute '%s' in value declaration", a.ident.text)
-				}
-			}
-		}
-
-		if v.shader_stage == .Compute {
-			v.local_size = 1
-		} else if v.local_size != 0 {
-			error(checker, v, "'local_size' attribute can only be applied to compute shaders")
-		}
-
-		if v.uniform && v.push_constant {
-			error(checker, v, "the 'push_constant' and 'uniform' attributes are mutually exclusive")
-		}
 
 		for &name, i in names {
 			if ident, ok := v.lhs[i].derived_expr.(^ast.Expr_Ident); ok {
@@ -605,7 +489,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		}
 
 		for &values, i in values {
-			values = check_expr_or_type(checker, v.values[i], stmt.attributes, explicit_type)
+			values = check_expr(checker, v.values[i], stmt.attributes, explicit_type)
 		}
 
 		v.types = make([]^types.Type, len(v.lhs), checker.allocator)
@@ -635,12 +519,6 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					}
 					name        := names[name_i]
 					entity_kind := Entity_Kind.Var
-					if !v.mutable {
-						entity_kind = .Const
-						if r.mode == .Type {
-							entity_kind = .Type
-						}
-					}
 
 					type := explicit_type
 					if type == nil {
@@ -666,14 +544,6 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				name        := names[name_i]
 				entity_kind := Entity_Kind.Var
 				value: types.Const_Value
-				if !v.mutable {
-					entity_kind = .Const
-					if r.mode == .Type {
-						entity_kind = .Type
-					} else {
-						value = r.value
-					}
-				}
 
 				type := explicit_type
 				if type == nil {
@@ -702,7 +572,241 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 	return
 }
 
-check_stmt_list :: proc(checker: ^Checker, stmts: []^ast.Stmt) -> (diverging: bool) {
+check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant: bool) {
+	decl.location = -1
+	decl.binding  = -1
+	seen := make(map[string]struct{}, context.temp_allocator)
+
+	for a in decl.attributes {
+		if a.ident.text in seen {
+			error(checker, a.ident, "duplicate attribute: '%v'", a.ident.text)
+		}
+		seen[a.ident.text] = {}
+
+		switch a.ident.text {
+		case "uniform":
+			decl.uniform = true
+			if a.value != nil {
+				error(checker, a.value, "'uniform' attribute does not accept a value")
+			}
+		case "push_constant":
+			decl.push_constant = true
+			if a.value != nil {
+				error(checker, a.value, "'push_constant' attribute does not accept a value")
+			}
+		case "readonly":
+			decl.readonly = true
+			if a.value != nil {
+				error(checker, a.value, "'readonly' attribute does not accept a value")
+			}
+		case "binding":
+			if a.value == nil {
+				error(checker, a.ident, "'binding' attribute requires a value")
+				break
+			}
+			value := check_expr(checker, a.value)
+			if val, ok := value.value.(i64); ok {
+				decl.binding = int(val)
+			} else {
+				error(checker, value, "'binding' attribute value must be a constant integer")
+			}
+		case "location":
+			if a.value == nil {
+				error(checker, a.ident, "'location' attribute requires a value")
+				break
+			}
+			value := check_expr(checker, a.value)
+			if val, ok := value.value.(i64); ok {
+				decl.location = int(val)
+			} else {
+				error(checker, value, "'location' attribute value must be a constant integer")
+			}
+		case "descriptor_set":
+			if a.value == nil {
+				error(checker, a.ident, "'descriptor_set' attribute requires a value")
+				break
+			}
+			value := check_expr(checker, a.value)
+			if val, ok := value.value.(i64); ok {
+				decl.descriptor_set = int(val)
+			} else {
+				error(checker, value, "'descriptor_set' attribute value must be a constant integer")
+			}
+		case "link_name":
+			if a.value == nil {
+				error(checker, a.ident, "'link_name' attribute requires a value")
+				break
+			}
+			value := check_expr(checker, a.value)
+			if val, ok := value.value.(string); ok {
+				decl.link_name = val
+			} else {
+				error(checker, value, "'descriptor_set' attribute value must be a constant string")
+			}
+		case "local_size":
+			if a.value == nil {
+				error(checker, a.ident, "'local_size' attribute requires a value")
+				break
+			}
+			if comp, ok := a.value.derived_expr.(^ast.Expr_Compound); ok {
+				if len(comp.fields) != 3 {
+					error(checker, a.value, "'local_size' attribute value must be a compount literal of three constant integers")
+					break
+				}
+				for field, i in comp.fields {
+					value := check_expr(checker, field.value)
+					if x, ok := value.value.(i64); ok {
+						if x <= 0 {
+							error(checker, field.value, "'local_size' values must be positive integers, got %v", x)
+						}
+						decl.local_size[i] = i32(x)
+					} else {
+						error(checker, field.value, "'local_size' values must be constant integers, got %v", value.type)
+					}
+				}
+			} else {
+				error(checker, a.value, "'local_size' attribute value must be a compount literal of three constant integers")
+			}
+		case:
+			found: bool
+			for name, stage in ast.shader_stage_names {
+				if name == a.ident.text {
+					if decl.shader_stage != nil {
+						error(checker, a.ident, "procedures can only be annotated with one shader stage")
+					}
+					decl.shader_stage = stage
+					found          = true
+					break
+				}
+			}
+			if !found {
+				error(checker, a.ident, "unknown attribute '%s' in value declaration", a.ident.text)
+			}
+		}
+	}
+
+	if decl.shader_stage == .Compute {
+		if decl.local_size == 0 {
+			decl.local_size = 1
+		}
+	} else if decl.local_size != 0 {
+		error(checker, decl, "'local_size' attribute can only be applied to compute shaders")
+	}
+
+	if decl.uniform && decl.push_constant {
+		error(checker, decl, "the 'push_constant' and 'uniform' attributes are mutually exclusive")
+	}
+}
+
+check_const_stmts :: proc(checker: ^Checker, stmts: []^ast.Stmt) {
+	for stmt in stmts {
+		if w, ok := stmt.derived_stmt.(^ast.Stmt_When); ok {
+			cond := check_expr(checker, w.cond)
+			if c, ok := cond.value.(bool); ok {
+				if c {
+					check_stmt_list(checker, w.then_block)
+				} else {
+					check_stmt_list(checker, w.else_block)
+				}
+			} else {
+				error(checker, cond, "expected a constant boolean expression in when statement condition")
+			}
+			continue
+		}
+		d, ok := stmt.derived_stmt.(^ast.Decl_Value)
+		if !ok || d.mutable {
+			continue
+		}
+
+		check_decl_attributes(checker, d, true)
+
+		names  := make([]tokenizer.Token, len(d.lhs),    checker.allocator)
+		values := make([]Operand,         len(d.values), checker.allocator)
+
+		for &name, i in names {
+			if ident, ok := d.lhs[i].derived_expr.(^ast.Expr_Ident); ok {
+				name = ident.ident
+			} else {
+				error(checker, d.lhs[i], "variable declaration must be an identifier")
+			}
+		}
+
+		explicit_type: ^types.Type
+		if d.type_expr != nil {
+			explicit_type = check_type(checker, d.type_expr)
+		}
+
+		for &values, i in values {
+			values = check_expr_or_type(checker, d.values[i], stmt.attributes, explicit_type)
+		}
+
+		d.types = make([]^types.Type, len(d.lhs), checker.allocator)
+
+		flags: Entity_Flags
+		entity_kind := Entity_Kind.Const
+		if len(values) == 0 {
+			for name in names {
+				scope_insert_entity(checker, entity_new(entity_kind, name, explicit_type, decl = d, flags = flags, allocator = checker.allocator))
+			}
+			for &t in d.types {
+				t = explicit_type
+			}
+			return
+		}
+
+		name_i := 0
+		for &r in values {
+			if r.type.kind == .Tuple {
+				error(checker, r, "Expected a constant expression or type in constant declaration")
+			} else {
+				if name_i >= len(names) {
+					name_i += 1
+					continue
+				}
+				entity_kind: Entity_Kind
+				value:       types.Const_Value
+				#partial switch r.mode {
+				case .Type:
+					entity_kind = .Type
+				case .Proc:
+					entity_kind = .Proc
+				case  .Const:
+					entity_kind = .Const
+					value       = r.value
+				case:
+					error(checker, r, "Expected a constant expression or type in constant declaration")
+					entity_kind = .Invalid
+				}
+
+				type := explicit_type
+				if type == nil {
+					type = r.type
+					if entity_kind != .Const {
+						type = types.default_type(type)
+					}
+				} else {
+					if !types.implicitly_castable(r.type, explicit_type) {
+						error(checker, stmt, "mismatched types in value declaration: %v vs %v", explicit_type, r.type)
+					}
+				}
+				d.types[name_i]       = type
+				d.values[name_i].type = type
+
+				scope_insert_entity(checker, entity_new(entity_kind, names[name_i], type, value = value, decl = d, allocator = checker.allocator))
+				name_i += 1
+			}
+		}
+		if name_i != len(names) {
+			error(checker, d, "assignment count mismatch: %v vs %v", len(names), name_i)
+		}
+	}
+}
+
+check_stmt_list :: proc(checker: ^Checker, stmts: []^ast.Stmt, ignore_constants := false) -> (diverging: bool) {
+	if !ignore_constants {
+		check_const_stmts(checker, stmts)
+	}
+
 	for stmt, i in stmts {
 		d := check_stmt(checker, stmt)
 		if d && !diverging && i != len(stmts) - 1 {
@@ -1276,6 +1380,8 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			operand.mode = .Type
 		case .Var:
 			operand.mode = .LValue
+		case .Proc:
+			operand.mode = .Proc
 		case .Builtin:
 			operand.mode       = .Builtin
 			operand.builtin_id = e.builtin_id
@@ -1341,7 +1447,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		type := check_proc_type(checker, v)
 
 		operand.type = type
-		operand.mode = .RValue
+		operand.mode = .Proc
 
 		scope_push(checker, .Proc).procedure = Scope_Proc_Info { type = type, lit = v, }
 		defer scope_pop(checker)
@@ -2345,7 +2451,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}, type_hint: ^types.Type = nil) -> (operand: Operand) {
 	operand = check_expr_internal(checker, expr, attributes, type_hint)
 	switch operand.mode {
-	case .RValue, .LValue, .Const, .Type:
+	case .RValue, .LValue, .Const, .Type, .Proc:
 		assert(operand.type != nil)
 		return
 	case .Builtin:
@@ -2364,7 +2470,7 @@ check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast
 check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}, type_hint: ^types.Type = nil, allow_no_value := false) -> (operand: Operand) {
 	operand = check_expr_internal(checker, expr, attributes, type_hint)
 	switch operand.mode {
-	case .RValue, .LValue, .Const:
+	case .RValue, .LValue, .Const, .Proc:
 		assert(operand.type != nil)
 		return
 	case .Builtin:
@@ -2387,7 +2493,7 @@ check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 check_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}) -> ^types.Type {
 	operand := check_expr_internal(checker, expr, attributes)
 	switch operand.mode {
-	case .RValue, .LValue, .Const:
+	case .RValue, .LValue, .Const, .Proc:
 		error(checker, operand, "expected a type, got expression")
 	case .Builtin:
 		error(checker, operand, "expected a type, got builtin")
