@@ -65,7 +65,7 @@ main :: proc() {
 
 	Options :: struct {
 		input:      string                     `args:"pos=0,required" usage:"Input file."`,
-		output:     string                     `args:"pos=1" usage:"Output file. Defaults to 'a.spv'"`,
+		output:     string                     `usage:"Output file. Defaults to 'a.spv'."`,
 		check:      bool                       `usage:"Stop after type-checking and don't emit a SPIR-V file."`,
 		target_env: Target_Env                 `usage:"The target environment."`,
 		defines:    map[string]hep.Const_Value `args:"name=define" usage:"Define compile time constants."`,
