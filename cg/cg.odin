@@ -54,6 +54,11 @@ CG_Image_Type :: struct {
 	sampled: bool,
 }
 
+Proc_Lit_Info :: struct {
+	expr: ^ast.Expr_Proc_Lit,
+	id:   spv.Id,
+}
+
 CG_Context :: struct {
 	constant_cache:     map[types.Const_Value]struct{ id: spv.Id, type: ^types.Type, },
 	string_cache:       map[string]spv.Id,
@@ -82,6 +87,8 @@ CG_Context :: struct {
 
 	capabilities:       map[spv.Capability]struct{},
 	referenced_globals: map[spv.Id]struct{},
+
+	procs:              [dynamic]Proc_Lit_Info,
 
 	link_name:          string,
 	shader_stage:       ast.Shader_Stage,
@@ -697,8 +704,7 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) 
 	return info
 }
 
-@(require_results)
-cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
+cg_proc_internal :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit, id: spv.Id) {
 	ctx.shader_stage  = p.shader_stage
 	type             := p.type.variant.(^types.Proc)
 	return_type_info := cg_type(ctx, type.return_type)
@@ -708,7 +714,16 @@ cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
 		proc_type_id   = VOID_PROC
 		return_type_id = VOID
 	}
-	id := spv.OpFunction(&ctx.functions, return_type_id, {}, proc_type_id)
+
+	{
+		// somewhat hacky, not sure if there is a nicer way of doing this
+		// maybe we should at least make ids be post incremented
+		// or maybe there should be a way of explicitly setting result-ids
+		id := id - 1
+		ctx.functions.current_id = &id
+		_ = spv.OpFunction(&ctx.functions, return_type_id, {}, proc_type_id)
+		ctx.functions.current_id = &ctx.current_id
+	}
 
 	scope := cg_scope_push(ctx)
 	defer cg_scope_pop(ctx)
@@ -820,6 +835,17 @@ cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
 			// spv.OpExecutionMode(&ctx.execution_modes, id, .OriginUpperLeft)
 		}
 	}
+}
+
+@(require_results)
+cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
+	ctx.current_id += 1
+	id := ctx.current_id
+
+	append(&ctx.procs, Proc_Lit_Info {
+		expr = p,
+		id   = id,
+	})
 
 	return { id = id, }
 }
@@ -2094,6 +2120,12 @@ cg_stmt_list :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmts: []^ast.Stmt
 		if cg_stmt(ctx, builder, stmt, global) {
 			returned = true
 		}
+	}
+	if global {
+		for p in ctx.procs {
+			cg_proc_internal(ctx, p.expr, p.id)
+		}
+		clear(&ctx.procs)
 	}
 	return returned
 }

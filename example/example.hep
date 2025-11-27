@@ -96,16 +96,6 @@ when SHADOW_PASS {
 		return shadow
 	}
 
-	aces_approx :: proc(v: [3]f32) -> [3]f32 {
-	    v := v * 0.6
-		a := 2.51
-		b := 0.03
-		c := 2.43
-		d := 0.59
-		e := 0.14
-	    return clamp((v * (a * v + b)) / (v * (c * v + d) + e), 0, 1)
-	}
-
 	@(fragment_shader, link_name = "main")
 	fragment_main :: proc(
 		v_position:        [3]f32 @ 0,
@@ -151,5 +141,15 @@ when SHADOW_PASS {
 		lighting := clamp(dot(v_normal, shadow_uniforms.light_direction), 0, 1)
 		f_color   = (0.2 + 0.8 * lighting * f32(1 - shadow)) * texture[v_tex_coords]
 		return aces_approx(f_color)
+	}
+
+	aces_approx :: proc(v: [3]f32) -> [3]f32 {
+	    v := v * 0.6
+		a := 2.51
+		b := 0.03
+		c := 2.43
+		d := 0.59
+		e := 0.14
+	    return clamp((v * (a * v + b)) / (v * (c * v + d) + e), 0, 1)
 	}
 }
