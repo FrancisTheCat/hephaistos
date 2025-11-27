@@ -141,6 +141,7 @@ scope_lookup :: proc(checker: ^Checker, name: string) -> (e: ^Entity, ok: bool) 
 	for s != nil {
 		e, ok = scope_lookup_current(s, name)
 		if ok {
+			resolve_constant(checker, e)
 			return
 		}
 		s = s.parent
@@ -466,7 +467,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		}
 
 	case ^ast.Decl_Value:
-		if !v.mutable {
+		if checker.scope.kind == .Global || !v.mutable {
 			break
 		}
 
@@ -494,7 +495,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 		v.types = make([]^types.Type, len(v.lhs), checker.allocator)
 
-		flags: Entity_Flags
+		flags: Entity_Flags = { .Resolved, }
 		if v.readonly {
 			flags += { .Readonly, }
 		}
@@ -533,7 +534,14 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					}
 					v.types[name_i] = type
 
-					scope_insert_entity(checker, entity_new(entity_kind, name, type, decl = v, allocator = checker.allocator))
+					scope_insert_entity(checker, entity_new(
+						entity_kind,
+						name,
+						type,
+						decl      = v,
+						flags     = flags,
+						allocator = checker.allocator,
+					))
 					name_i += 1
 				}
 			} else {
@@ -559,7 +567,15 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				v.types[name_i]       = type
 				v.values[name_i].type = type
 
-				scope_insert_entity(checker, entity_new(entity_kind, name, type, value = value, decl = v, allocator = checker.allocator))
+				scope_insert_entity(checker, entity_new(
+					entity_kind,
+					name,
+					type,
+					value     = value,
+					decl      = v,
+					flags     = flags,
+					allocator = checker.allocator,
+				))
 				name_i += 1
 			}
 		}
@@ -698,31 +714,21 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 	}
 }
 
-check_const_stmts :: proc(checker: ^Checker, stmts: []^ast.Stmt) {
+collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entities: ^[dynamic]^Entity) {
 	for stmt in stmts {
-		if w, ok := stmt.derived_stmt.(^ast.Stmt_When); ok {
-			cond := check_expr(checker, w.cond)
-			if c, ok := cond.value.(bool); ok {
-				if c {
-					check_stmt_list(checker, w.then_block)
-				} else {
-					check_stmt_list(checker, w.else_block)
-				}
-			} else {
-				error(checker, cond, "expected a constant boolean expression in when statement condition")
-			}
+		d, ok := stmt.derived_stmt.(^ast.Decl_Value)
+		if !ok {
 			continue
 		}
-		d, ok := stmt.derived_stmt.(^ast.Decl_Value)
-		if !ok || d.mutable {
+		if d.mutable && !global {
 			continue
 		}
 
 		check_decl_attributes(checker, d, true)
 
-		names  := make([]tokenizer.Token, len(d.lhs),    checker.allocator)
-		values := make([]Operand,         len(d.values), checker.allocator)
+		d.types = make([]^types.Type, len(d.lhs), checker.allocator)
 
+		names := make([]tokenizer.Token, len(d.lhs), checker.allocator)
 		for &name, i in names {
 			if ident, ok := d.lhs[i].derived_expr.(^ast.Expr_Ident); ok {
 				name = ident.ident
@@ -731,74 +737,108 @@ check_const_stmts :: proc(checker: ^Checker, stmts: []^ast.Stmt) {
 			}
 		}
 
-		explicit_type: ^types.Type
-		if d.type_expr != nil {
-			explicit_type = check_type(checker, d.type_expr)
-		}
-
-		for &values, i in values {
-			values = check_expr_or_type(checker, d.values[i], stmt.attributes, explicit_type)
-		}
-
-		d.types = make([]^types.Type, len(d.lhs), checker.allocator)
-
 		flags: Entity_Flags
-		entity_kind := Entity_Kind.Const
-		if len(values) == 0 {
-			for name in names {
-				scope_insert_entity(checker, entity_new(entity_kind, name, explicit_type, decl = d, flags = flags, allocator = checker.allocator))
-			}
-			for &t in d.types {
-				t = explicit_type
-			}
-			return
+		entity_kind := Entity_Kind.Invalid
+		for name in names {
+			type := types.new_any(checker.allocator)
+			e    := entity_new(entity_kind, name, type, decl = d, flags = flags, allocator = checker.allocator)
+			scope_insert_entity(checker, e)
+			append(entities, e)
 		}
+	}
 
-		name_i := 0
-		for &r in values {
-			if r.type.kind == .Tuple {
-				error(checker, r, "Expected a constant expression or type in constant declaration")
+	for stmt in stmts {
+		v    := stmt.derived_stmt.(^ast.Stmt_When) or_continue
+		cond := check_expr(checker, v.cond)
+		if c, ok := cond.value.(bool); ok {
+			if c {
+				collect_decls(checker, v.then_block, global, entities)
 			} else {
-				if name_i >= len(names) {
-					name_i += 1
-					continue
-				}
-				entity_kind: Entity_Kind
-				value:       types.Const_Value
-				#partial switch r.mode {
-				case .Type:
-					entity_kind = .Type
-				case .Proc:
-					entity_kind = .Proc
-				case  .Const:
-					entity_kind = .Const
-					value       = r.value
-				case:
-					error(checker, r, "Expected a constant expression or type in constant declaration")
-					entity_kind = .Invalid
-				}
-
-				type := explicit_type
-				if type == nil {
-					type = r.type
-					if entity_kind != .Const {
-						type = types.default_type(type)
-					}
-				} else {
-					if !types.implicitly_castable(r.type, explicit_type) {
-						error(checker, stmt, "mismatched types in value declaration: %v vs %v", explicit_type, r.type)
-					}
-				}
-				d.types[name_i]       = type
-				d.values[name_i].type = type
-
-				scope_insert_entity(checker, entity_new(entity_kind, names[name_i], type, value = value, decl = d, allocator = checker.allocator))
-				name_i += 1
+				collect_decls(checker, v.else_block, global, entities)
 			}
+		} else {
+			error(checker, cond, "expected a constant boolean expression in when statement condition")
 		}
-		if name_i != len(names) {
-			error(checker, d, "assignment count mismatch: %v vs %v", len(names), name_i)
+	}
+}
+
+resolve_constant :: proc(checker: ^Checker, e: ^Entity) {
+	if .Resolved in e.flags {
+		return
+	}
+	if .In_Progress in e.flags {
+		error(checker, e.ident, "illegal dependency cycle")
+		e.flags += { .Resolved, }
+		return
+	}
+	e.flags += { .In_Progress, }
+
+	defer {
+		e.flags -= { .In_Progress, }
+		e.flags += { .Resolved, }
+	}
+
+	assert(e.decl != nil)
+	d           := e.decl.derived_decl.(^ast.Decl_Value)
+	value_index := -1
+	for lhs, i in d.lhs {
+		ident := lhs.derived_expr.(^ast.Expr_Ident) or_else {}
+		if ident.ident.text == e.name {
+			value_index = i
+			break
 		}
+	}
+	assert(value_index != -1)
+
+	type: ^types.Type
+	if d.type_expr != nil {
+		type = check_type(checker, d.type_expr)
+	}
+
+	if len(d.values) == 0 {
+		e.kind               = .Var
+		e.type               = type
+		d.types[value_index] = type
+		return
+	}
+
+	v := check_expr_or_type(checker, d.values[value_index], d.attributes, type)
+
+	#partial switch v.mode {
+	case .Type:
+		e.kind = .Type
+	case .Proc:
+		e.kind = .Proc
+	case .Const:
+		e.kind  = .Const
+		e.value = v.value
+	case:
+		error(checker, v, "Expected a constant expression or type in constant declaration")
+		e.kind = .Invalid
+	}
+
+	if type == nil {
+		type = v.type
+		if e.kind != .Const {
+			type = types.default_type(type)
+		}
+	} else {
+		if !types.implicitly_castable(v.type, type) {
+			error(checker, v, "mismatched types in value declaration: %v vs %v", type, v.type)
+		}
+	}
+
+	d.types[value_index]       = type
+	d.values[value_index].type = type
+
+	e.type = type
+}
+
+check_const_stmts :: proc(checker: ^Checker, stmts: []^ast.Stmt) {
+	entities := make([dynamic]^Entity, context.temp_allocator)
+	collect_decls(checker, stmts, checker.scope.kind == .Global, &entities)
+	for e in entities {
+		resolve_constant(checker, e)
 	}
 }
 
@@ -858,9 +898,14 @@ checker_init :: proc(
 		checker.shared_types[s.name] = s.type
 	}
 
+	for _, &e in checker.scope.elements {
+		e.flags += { .Resolved, }
+	}
+
 	checker.config_vars = defines
 }
 
+@(require_results)
 type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator) -> ^types.Type {
 	switch v in ti.variant {
 	case reflect.Type_Info_Named:
@@ -997,6 +1042,7 @@ Shared_Type :: struct {
 	type: ^types.Type,
 }
 
+@(require_results)
 shared_types_from_typeids :: proc(typeids: []typeid, allocator := context.allocator) -> []Shared_Type {
 	output := make([]Shared_Type, len(typeids), allocator)
 	for t, i in typeids {
@@ -1008,6 +1054,7 @@ shared_types_from_typeids :: proc(typeids: []typeid, allocator := context.alloca
 	return output
 }
 
+@(require_results)
 check :: proc(
 	stmts:   []^ast.Stmt,
 	defines: map[string]types.Const_Value,
@@ -1021,6 +1068,7 @@ check :: proc(
 	return checker, checker.errors[:]
 }
 
+@(require_results)
 op_is_relation :: proc(token_kind: tokenizer.Token_Kind) -> bool {
 	#partial switch token_kind {
 	case .Equal, .Not_Equal, .Less_Equal, .Greater_Equal, .Less, .Greater:
@@ -1029,6 +1077,7 @@ op_is_relation :: proc(token_kind: tokenizer.Token_Kind) -> bool {
 	return false
 }
 
+@(require_results)
 evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: types.Const_Value, expr: ^ast.Expr_Binary) -> types.Const_Value {
 	assert(lhs != nil)
 	assert(rhs != nil)
@@ -1172,6 +1221,7 @@ evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: types.Const_Value,
 	return nil
 }
 
+@(require_results)
 check_proc_type :: proc(checker: ^Checker, p: $T) -> ^types.Proc {
 	check_field_list :: proc(checker: ^Checker, fields: []ast.Field, usage: string) -> (out_fields: [dynamic]types.Field) {
 		out_fields.allocator = checker.allocator
@@ -1282,6 +1332,7 @@ check_proc_type :: proc(checker: ^Checker, p: $T) -> ^types.Proc {
 	return t
 }
 
+@(require_results)
 check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field, type_hint: ^types.Type = nil) -> (operand: Operand) {
 	operand.expr = expr
 
@@ -1430,7 +1481,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				error(
 					checker,
 					attribute.ident,
-					"the attributes %s and %s are mutually exclusive",
+					"the attributes '%s' and '%s' are mutually exclusive",
 					ast.shader_stage_names[shader_stage],
 					ast.shader_stage_names[s],
 				)
@@ -1454,7 +1505,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 
 		for arg in type.args {
 			if arg.name.text != "" {
-				scope_insert_entity(checker, entity_new(.Var, arg.name, arg.type, flags = { .Readonly, }, allocator = checker.allocator))
+				scope_insert_entity(checker, entity_new(.Var, arg.name, arg.type, flags = { .Readonly, .Resolved, }, allocator = checker.allocator))
 			}
 		}
 
@@ -1463,7 +1514,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 
 		for ret in type.returns {
 			if ret.name.text != "" {
-				scope_insert_entity(checker, entity_new(.Var, ret.name, ret.type, allocator = checker.allocator))
+				scope_insert_entity(checker, entity_new(.Var, ret.name, ret.type, flags = { .Resolved, }, allocator = checker.allocator))
 			}
 		}
 		check_stmt_list(checker, v.body)
@@ -1481,7 +1532,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			}
 
 			if type_hint.kind != .Enum {
-				error(checker, v, "implicit selectors can only be used for enum types, got %v", type_hint)
+				error(checker, v, "implicit selectors can only be used for enum types, got '%v'", type_hint)
 				return
 			}
 
@@ -1501,7 +1552,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 
 		if lhs.mode == .Type {
 			if lhs.type.kind != .Enum {
-				error(checker, v, "expected an expression or an enum type, got %v", lhs.type)
+				error(checker, v, "expected an expression or an enum type, got '%v'", lhs.type)
 				return
 			}
 
@@ -1514,7 +1565,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 			}
 
-			error(checker, v, "%s is not a variant of the enum type %v", v.selector.text, type_hint)
+			error(checker, v, "'%s' is not a variant of the enum type '%v'", v.selector.text, type_hint)
 			return
 		}
 
@@ -1534,7 +1585,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					index = 3
 				}
 				if index == -1 || index > lhs.type.variant.(^types.Vector).count {
-					error(checker, v, "can not swizzle vector of type %s with coordinate '%v'", lhs.type, char)
+					error(checker, v, "can not swizzle vector of type '%s' with coordinate '%v'", lhs.type, char)
 				}
 				if index != -1 {
 					if seen[index] {
@@ -2448,6 +2499,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 	return
 }
 
+@(require_results)
 check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}, type_hint: ^types.Type = nil) -> (operand: Operand) {
 	operand = check_expr_internal(checker, expr, attributes, type_hint)
 	switch operand.mode {
@@ -2467,6 +2519,7 @@ check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast
 	return
 }
 
+@(require_results)
 check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}, type_hint: ^types.Type = nil, allow_no_value := false) -> (operand: Operand) {
 	operand = check_expr_internal(checker, expr, attributes, type_hint)
 	switch operand.mode {
@@ -2490,6 +2543,7 @@ check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 	return
 }
 
+@(require_results)
 check_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}) -> ^types.Type {
 	operand := check_expr_internal(checker, expr, attributes)
 	switch operand.mode {

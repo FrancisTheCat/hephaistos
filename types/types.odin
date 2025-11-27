@@ -113,6 +113,22 @@ Type :: struct {
 }
 
 @(require_results)
+new_any :: proc(allocator: mem.Allocator) -> ^Type {
+	size := max(
+		size_of(Struct),
+		size_of(Matrix),
+		size_of(Vector),
+		size_of(Buffer),
+		size_of(Proc),
+		size_of(Image),
+		size_of(Enum),
+		size_of(Bit_Set),
+	)
+	p, _ := mem.alloc(size, allocator = allocator)
+	return (^Type)(p)
+}
+
+@(require_results)
 new :: proc(kind: Kind, $T: typeid, allocator: mem.Allocator) -> ^T {
 	t, _ := mem.new(T, allocator)
 	t.kind    = kind
