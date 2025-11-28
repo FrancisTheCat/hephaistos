@@ -56,8 +56,9 @@ Image_Type :: struct {
 }
 
 Proc_Lit_Info :: struct {
-	expr: ^ast.Expr_Proc_Lit,
-	id:   spv.Id,
+	expr:      ^ast.Expr_Proc_Lit,
+	id:        spv.Id,
+	link_name: string,
 }
 
 Context :: struct {
@@ -706,7 +707,7 @@ cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> ^Ty
 	return info
 }
 
-cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id) {
+cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_name: string) {
 	ctx.shader_stage  = p.shader_stage
 	type             := p.type.variant.(^types.Proc)
 	return_type_info := cg_type(ctx, type.return_type)
@@ -824,11 +825,7 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id) {
 			append(&interface, g)
 		}
 		clear(&ctx.referenced_globals)
-		name := "$entry_point"
-		if len(ctx.link_name) != 0 {
-			name = ctx.link_name
-		}
-		spv.OpEntryPoint(&ctx.entry_points, execution_mode, id, name, ..interface[:])
+		spv.OpEntryPoint(&ctx.entry_points, execution_mode, id, link_name, ..interface[:])
 		#partial switch p.shader_stage {
 		case .Fragment:
 			spv.OpExecutionMode(&ctx.execution_modes, id, .OriginUpperLeft)
@@ -845,8 +842,9 @@ cg_proc_lit :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit) -> Value {
 	id := ctx.current_id
 
 	append(&ctx.procs, Proc_Lit_Info {
-		expr = p,
-		id   = id,
+		expr      = p,
+		id        = id,
+		link_name = ctx.link_name,
 	})
 
 	return { id = id, }
@@ -2125,7 +2123,7 @@ cg_stmt_list :: proc(ctx: ^Context, builder: ^spv.Builder, stmts: []^ast.Stmt, g
 	}
 	if global {
 		for p in ctx.procs {
-			cg_proc_internal(ctx, p.expr, p.id)
+			cg_proc_internal(ctx, p.expr, p.id, p.link_name)
 		}
 		clear(&ctx.procs)
 	}
