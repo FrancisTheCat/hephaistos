@@ -1381,7 +1381,6 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		operand.mode = .Const
 
 	case ^ast.Expr_Binary:
-		// TODO: check applicability of operator
 		lhs := check_expr(checker, v.lhs)
 		rhs := check_expr(checker, v.rhs, type_hint = lhs.type if v.op != .Multiply else nil)
 
