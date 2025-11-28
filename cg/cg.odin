@@ -1,5 +1,7 @@
 package hephaistos_cg
 
+import "base:runtime"
+
 import "core:fmt"
 import "core:reflect"
 import "core:slice"
@@ -8,13 +10,14 @@ import "../ast"
 import "../types"
 import "../tokenizer"
 import "../checker"
+import "../hashmap"
 
 import spv      "../spirv-odin"
 import spv_glsl "../spirv-odin/spirv_glsl"
 
 VOID, VOID_PROC: spv.Id
 
-CG_Storage_Class :: enum {
+Storage_Class :: enum {
 	By_Value = 0,
 	Global,
 	Function,
@@ -27,25 +30,23 @@ CG_Storage_Class :: enum {
 	Image,
 }
 
-CG_Type_Info :: struct {
+Type_Info :: struct {
 	type:       spv.Id,
 	nil_value:  spv.Id,
 	image_type: spv.Id, // for sampler types: the type of the sampled image
 	array_type: spv.Id,
 	array_ptr:  spv.Id,
-	ptr_types:  [CG_Storage_Class]spv.Id,
+	ptr_types:  [Storage_Class]spv.Id,
 }
 
-Type_Hash_Entry :: struct {
-	hash:  u64,
+Type_Key :: struct {
 	type:  ^types.Type,
-	info:  ^CG_Type_Info,
-	flags: CG_Type_Flags,
+	flags: Type_Flags,
 }
 
-Type_Registry :: [][dynamic]Type_Hash_Entry
+Type_Registry :: hashmap.Hash_Map(Type_Key, ^Type_Info)
 
-CG_Image_Type :: struct {
+Image_Type :: struct {
 	dimensions:   int,
 	texel_type: struct {
 		size: int,
@@ -59,11 +60,11 @@ Proc_Lit_Info :: struct {
 	id:   spv.Id,
 }
 
-CG_Context :: struct {
+Context :: struct {
 	constant_cache:     map[types.Const_Value]struct{ id: spv.Id, type: ^types.Type, },
 	string_cache:       map[string]spv.Id,
 	type_registry:      Type_Registry,
-	image_types:        map[CG_Image_Type]struct {
+	image_types:        map[Image_Type]struct {
 		image:   spv.Id,
 		sampler: spv.Id,
 	},
@@ -83,7 +84,7 @@ CG_Context :: struct {
 
 	current_id:         spv.Id,
 	checker:            ^checker.Checker,
-	scopes:             [dynamic]CG_Scope,
+	scopes:             [dynamic]Scope,
 
 	capabilities:       map[spv.Capability]struct{},
 	referenced_globals: map[spv.Id]struct{},
@@ -99,9 +100,9 @@ CG_Context :: struct {
 	spirv_version:      u32,
 }
 
-CG_Value :: struct {
+Value :: struct {
 	id:              spv.Id,
-	storage_class:   CG_Storage_Class,
+	storage_class:   Storage_Class,
 	type:            ^types.Type,
 	real_type:       ^types.Type, // non swizzled type
 	swizzle:         []u32,
@@ -110,8 +111,8 @@ CG_Value :: struct {
 	coord:           spv.Id, // texel reference for ImageStore
 }
 
-CG_Scope :: struct {
-	entities:     map[string]CG_Value,
+Scope :: struct {
+	entities:     map[string]Value,
 	label:        string,
 	label_id:     spv.Id,
 	return_value: spv.Id, // 0 when the return values are shader stage outputs
@@ -119,7 +120,7 @@ CG_Scope :: struct {
 	outputs:      []spv.Id,
 }
 
-cg_lookup_entity :: proc(ctx: ^CG_Context, name: string) -> ^CG_Value {
+cg_lookup_entity :: proc(ctx: ^Context, name: string) -> ^Value {
 	#reverse for scope in ctx.scopes {
 		e := &scope.entities[name]
 		if e != nil {
@@ -129,7 +130,7 @@ cg_lookup_entity :: proc(ctx: ^CG_Context, name: string) -> ^CG_Value {
 	panic("cg_lookup_entity failed")
 }
 
-cg_insert_entity :: proc(ctx: ^CG_Context, name: string, storage_class: CG_Storage_Class, type: ^types.Type, id: spv.Id) {
+cg_insert_entity :: proc(ctx: ^Context, name: string, storage_class: Storage_Class, type: ^types.Type, id: spv.Id) {
 	spv.OpName(&ctx.debug_b, id, name)
 	ctx.scopes[len(ctx.scopes) - 1].entities[name] = {
 		type          = type,
@@ -138,19 +139,19 @@ cg_insert_entity :: proc(ctx: ^CG_Context, name: string, storage_class: CG_Stora
 	}
 }
 
-cg_scope_push :: proc(ctx: ^CG_Context, label: string = "") -> ^CG_Scope {
-	append(&ctx.scopes, CG_Scope {
+cg_scope_push :: proc(ctx: ^Context, label: string = "") -> ^Scope {
+	append(&ctx.scopes, Scope {
 		label = label,
 	})
 	return &ctx.scopes[len(ctx.scopes) - 1]
 }
 
-cg_scope_pop :: proc(ctx: ^CG_Context) -> CG_Scope {
+cg_scope_pop :: proc(ctx: ^Context) -> Scope {
 	return pop(&ctx.scopes)
 }
 
 cg_scope :: proc(
-	ctx:     ^CG_Context,
+	ctx:     ^Context,
 	builder: ^spv.Builder,
 	stmts:   []^ast.Stmt,
 	next:    spv.Id = 0,
@@ -169,35 +170,18 @@ cg_scope :: proc(
 	return
 }
 
-register_type :: proc(registry: ^Type_Registry, t: ^types.Type, flags: CG_Type_Flags) -> (type_info: ^CG_Type_Info, ok: bool) {
-	hash := types.type_hash(t)
-	if hash == 0 {
-		hash = 1
+register_type :: proc(registry: ^Type_Registry, key: Type_Key) -> (type_info: ^Type_Info, ok: bool) {
+	ti := hashmap.get(registry, key)
+	if ti != nil {
+		return ti^, true
+	} else {
+		type_info = new(Type_Info)
+		hashmap.insert(registry, key, type_info)
+		return
 	}
-	entry := &registry[hash % u64(len(registry))]
-	for &e in entry {
-		if e.type == t && (t.kind != .Struct || e.flags == flags) {
-			return e.info, true
-		}
-	}
-	for &e in entry {
-		if (t.kind != .Struct || e.flags == flags) && e.hash == hash && types.equal(t, e.type) {
-			return e.info, true
-		}
-	}
-	append(entry, Type_Hash_Entry {
-		hash  = hash,
-		type  = t,
-		flags = flags,
-	})
-
-	type_info                  = new(CG_Type_Info)
-	entry[len(entry) - 1].info = type_info
-
-	return
 }
 
-cg_string :: proc(ctx: ^CG_Context, str: string) -> spv.Id {
+cg_string :: proc(ctx: ^Context, str: string) -> spv.Id {
 	if id, ok := ctx.string_cache[str]; ok {
 		return id
 	}
@@ -206,14 +190,14 @@ cg_string :: proc(ctx: ^CG_Context, str: string) -> spv.Id {
 	return id
 }
 
-cg_decl :: proc(ctx: ^CG_Context, builder: ^spv.Builder, decl: ^ast.Decl, global: bool) {
+cg_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl, global: bool) {
 	value_builder     := builder
 	decl_builder      := &ctx.functions
-	storage_class     := CG_Storage_Class.Function
+	storage_class     := Storage_Class.Function
 	spv_storage_class := spv.StorageClass.Function
 	has_nil_value     := true
 	annotate          := false
-	flags: CG_Type_Flags
+	flags: Type_Flags
 
 	if global {
 		value_builder     = nil
@@ -358,11 +342,29 @@ generate :: proc(
 ) -> []u32 {
 	context.allocator = context.temp_allocator
 
-	ctx: CG_Context = {
+	ctx: Context = {
 		checker       = checker,
-		type_registry = make(Type_Registry, 1024),
 		spirv_version = spirv_version,
 	}
+	hashmap.init(
+		&ctx.type_registry,
+		proc(key: Type_Key, seed: uintptr) -> uintptr {
+			h := seed
+			if key.type.kind == .Struct {
+				flags := key.flags
+				h      = runtime.default_hasher(&flags, seed, size_of(flags))
+			}
+			return uintptr(types.type_hash(key.type, u64(h)))
+		},
+		proc(a, b: Type_Key) -> bool {
+			if a.type.kind == .Struct && b.type.kind == .Struct {
+				if a.flags != b.flags {
+					return false
+				}
+			}
+			return types.equal(a.type, b.type)
+		},
+	)
 
 	for b := cast([^]spv.Builder)&ctx.meta; b != cast([^]spv.Builder)&ctx.current_id; b = b[1:] {
 		b[0].current_id = &ctx.current_id
@@ -421,7 +423,7 @@ generate :: proc(
 	return spirv
 }
 
-cg_constant :: proc(ctx: ^CG_Context, value: types.Const_Value) -> CG_Value {
+cg_constant :: proc(ctx: ^Context, value: types.Const_Value) -> Value {
 	if cached, ok := ctx.constant_cache[value]; ok {
 		return {
 			id   = cached.id,
@@ -475,7 +477,7 @@ cg_nil_value :: proc {
 }
 
 @(require_results)
-cg_nil_value_from_type :: proc(ctx: ^CG_Context, type_info: ^CG_Type_Info) -> spv.Id {
+cg_nil_value_from_type :: proc(ctx: ^Context, type_info: ^Type_Info) -> spv.Id {
 	if type_info.nil_value == 0 {
 		type_info.nil_value = spv.OpConstantNull(&ctx.types, type_info.type)
 	}
@@ -483,7 +485,7 @@ cg_nil_value_from_type :: proc(ctx: ^CG_Context, type_info: ^CG_Type_Info) -> sp
 }
 
 @(require_results)
-cg_nil_value_from_type_info :: proc(ctx: ^CG_Context, type: ^types.Type) -> spv.Id {
+cg_nil_value_from_type_info :: proc(ctx: ^Context, type: ^types.Type) -> spv.Id {
 	return cg_nil_value_from_type(ctx, cg_type(ctx, type))
 }
 
@@ -493,7 +495,7 @@ cg_type_ptr :: proc {
 }
 
 @(require_results)
-cg_type_ptr_from_type :: proc(ctx: ^CG_Context, type_info: ^CG_Type_Info, storage_class: CG_Storage_Class) -> spv.Id {
+cg_type_ptr_from_type :: proc(ctx: ^Context, type_info: ^Type_Info, storage_class: Storage_Class) -> spv.Id {
 	if type_info.ptr_types[storage_class] == 0 {
 		spv_storage_class: spv.StorageClass
 		switch storage_class {
@@ -524,25 +526,25 @@ cg_type_ptr_from_type :: proc(ctx: ^CG_Context, type_info: ^CG_Type_Info, storag
 }
 
 @(require_results)
-cg_type_ptr_from_type_info :: proc(ctx: ^CG_Context, type: ^types.Type, storage_class: CG_Storage_Class) -> spv.Id {
+cg_type_ptr_from_type_info :: proc(ctx: ^Context, type: ^types.Type, storage_class: Storage_Class) -> spv.Id {
 	return cg_type_ptr_from_type(ctx, cg_type(ctx, type), storage_class)
 }
 
-CG_Type_Flag :: enum {
+Type_Flag :: enum {
 	Block,
 	Explicit_Layout,
 }
 
-CG_Type_Flags :: bit_set[CG_Type_Flag]
+Type_Flags :: bit_set[Type_Flag]
 
 @(require_results)
-cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) -> ^CG_Type_Info {
+cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> ^Type_Info {
 	assert(type != nil)
 	assert(.Block not_in flags || .Explicit_Layout in flags)
 	type := types.base_type(type)
 
 	registry := &ctx.type_registry
-	info, ok := register_type(registry, type, flags)
+	info, ok := register_type(registry, { type, flags, })
 	if ok {
 		assert(info.type != 0)
 		return info
@@ -643,7 +645,7 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) 
 			assert(types.is_vector(type.texel_type))
 			sampled_type = type.texel_type.variant.(^types.Vector).elem
 		}
-		image_type := CG_Image_Type {
+		image_type := Image_Type {
 			dimensions = type.dimensions,
 			texel_type = {
 				size = sampled_type.size,
@@ -670,7 +672,7 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) 
 			assert(types.is_vector(type.texel_type))
 			texel_type = type.texel_type.variant.(^types.Vector).elem
 		}
-		image_type := CG_Image_Type {
+		image_type := Image_Type {
 			dimensions = type.dimensions,
 			texel_type = {
 				size = texel_type.size,
@@ -704,7 +706,7 @@ cg_type :: proc(ctx: ^CG_Context, type: ^types.Type, flags: CG_Type_Flags = {}) 
 	return info
 }
 
-cg_proc_internal :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit, id: spv.Id) {
+cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id) {
 	ctx.shader_stage  = p.shader_stage
 	type             := p.type.variant.(^types.Proc)
 	return_type_info := cg_type(ctx, type.return_type)
@@ -838,7 +840,7 @@ cg_proc_internal :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit, id: spv.Id) {
 }
 
 @(require_results)
-cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
+cg_proc_lit :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit) -> Value {
 	ctx.current_id += 1
 	id := ctx.current_id
 
@@ -851,7 +853,7 @@ cg_proc_lit :: proc(ctx: ^CG_Context, p: ^ast.Expr_Proc_Lit) -> CG_Value {
 }
 
 @(require_results)
-cg_deref :: proc(ctx: ^CG_Context, builder: ^spv.Builder, value: CG_Value) -> spv.Id {
+cg_deref :: proc(ctx: ^Context, builder: ^spv.Builder, value: Value) -> spv.Id {
 	if len(value.swizzle) != 0 {
 		id := value.id
 		if value.storage_class != .By_Value {
@@ -912,10 +914,10 @@ cg_deref :: proc(ctx: ^CG_Context, builder: ^spv.Builder, value: CG_Value) -> sp
 
 @(require_results)
 cg_expr_binary :: proc(
-	ctx:                  ^CG_Context,
+	ctx:                  ^Context,
 	builder:              ^spv.Builder,
 	op:                   tokenizer.Token_Kind,
-	lhs_value, rhs_value: CG_Value,
+	lhs_value, rhs_value: Value,
 	type:                ^^types.Type,
 ) -> spv.Id {
 	lhs      := lhs_value.id
@@ -1091,16 +1093,16 @@ cg_expr_binary :: proc(
 
 @(require_results)
 cg_interface :: proc(
-	ctx:     ^CG_Context,
+	ctx:     ^Context,
 	builtin: string,
-) -> (value: CG_Value) {
+) -> (value: Value) {
 	defer ctx.referenced_globals[value.id] = {}
 
 	builtin, ok := reflect.enum_from_name(spv.BuiltIn, builtin)
 	assert(ok)
 
 	info := checker.interface_infos[builtin]
-	storage_class:     CG_Storage_Class
+	storage_class:     Storage_Class
 	spv_storage_class: spv.StorageClass
 	switch info.usage[ctx.shader_stage] {
 	case .In:
@@ -1124,11 +1126,11 @@ cg_interface :: proc(
 
 @(require_results)
 cg_expr :: proc(
-	ctx:     ^CG_Context,
+	ctx:     ^Context,
 	builder: ^spv.Builder,
 	expr:    ^ast.Expr,
 	deref:   bool = true,
-) -> (value: CG_Value) {
+) -> (value: Value) {
 	assert(expr      != nil)
 	assert(expr.type != nil)
 
@@ -1149,9 +1151,9 @@ cg_expr :: proc(
 
 @(require_results)
 cg_cast :: proc(
-	ctx:     ^CG_Context,
+	ctx:     ^Context,
 	builder: ^spv.Builder,
-	value:    CG_Value,
+	value:    Value,
 	type:    ^types.Type,
 ) -> spv.Id {
 	type               := types.base_type(type)
@@ -1258,10 +1260,10 @@ spv_version :: proc(major, minor: u32) -> u32 {
 }
 
 _cg_expr :: proc(
-	ctx:     ^CG_Context,
+	ctx:     ^Context,
 	builder: ^spv.Builder,
 	expr:    ^ast.Expr,
-) -> (value: CG_Value) {
+) -> (value: Value) {
 	assert(expr      != nil)
 	assert(expr.type != nil)
 
@@ -1301,7 +1303,7 @@ _cg_expr :: proc(
 		lhs_type := v.lhs.type
 		if lhs.type.kind == .Struct {
 			field_index: int = -1
-			type_info:   ^CG_Type_Info
+			type_info:   ^Type_Info
 			field_type:  ^types.Type
 			for field, i in lhs_type.variant.(^types.Struct).fields {
 				if field.name.text == v.selector.text {
@@ -1338,7 +1340,7 @@ _cg_expr :: proc(
 			t := lhs.type.variant.(^types.Vector).elem
 			if lhs.storage_class != nil {
 				id    := spv.OpAccessChain(builder, cg_type_ptr(ctx, t, lhs.storage_class), lhs.id, cg_constant(ctx, i64(indices[0])).id)
-				value := CG_Value { id = id, storage_class = lhs.storage_class, type = t, }
+				value := Value { id = id, storage_class = lhs.storage_class, type = t, }
 				return value
 			}
 
@@ -1611,7 +1613,7 @@ _cg_expr :: proc(
 				if types.is_tuple(value.type) {
 					t := value.type.variant.(^types.Struct)
 					for field_type in t.fields {
-						field_value := CG_Value {
+						field_value := Value {
 							id   = value.id, // totally wrong!!! only works for tuples with one value
 							type = field_type.type,
 						}
@@ -1761,7 +1763,7 @@ _cg_expr :: proc(
 	fmt.panicf("unimplemented: %v", reflect.union_variant_typeid(expr.derived_expr))
 }
 
-cg_lookup_proc_scope :: proc(ctx: ^CG_Context) -> ^CG_Scope {
+cg_lookup_proc_scope :: proc(ctx: ^Context) -> ^Scope {
 	#reverse for &scope in ctx.scopes {
 		if scope.return_type != nil {
 			return &scope
@@ -1770,15 +1772,15 @@ cg_lookup_proc_scope :: proc(ctx: ^CG_Context) -> ^CG_Scope {
 	panic("")
 }
 
-cg_lookup_return_value :: proc(ctx: ^CG_Context) -> spv.Id {
+cg_lookup_return_value :: proc(ctx: ^Context) -> spv.Id {
 	return cg_lookup_proc_scope(ctx).return_value
 }
 
-cg_lookup_return_type :: proc(ctx: ^CG_Context) -> ^types.Type {
+cg_lookup_return_type :: proc(ctx: ^Context) -> ^types.Type {
 	return cg_lookup_proc_scope(ctx).return_type
 }
 
-cg_lookup_label :: proc(ctx: ^CG_Context, label: string) -> ^CG_Scope {
+cg_lookup_label :: proc(ctx: ^Context, label: string) -> ^Scope {
 	#reverse for &scope in ctx.scopes {
 		if scope.label == label {
 			return &scope
@@ -1787,7 +1789,7 @@ cg_lookup_label :: proc(ctx: ^CG_Context, label: string) -> ^CG_Scope {
 	panic("")
 }
 
-cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global := false) -> (returned: bool) {
+cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global := false) -> (returned: bool) {
 	if stmt == nil {
 		return
 	}
@@ -2036,7 +2038,7 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 	case ^ast.Stmt_Assign:
 		lhs_i := 0
 		for value in v.rhs {
-			values := []CG_Value{ cg_expr(ctx, builder, value), }
+			values := []Value{ cg_expr(ctx, builder, value), }
 			deconstruct_tuple: if value.type.kind == .Tuple {
 				type := value.type.variant.(^types.Struct)
 				v    := values[0]
@@ -2049,7 +2051,7 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 					break deconstruct_tuple
 				}
 
-				values = make([]CG_Value, len(type.fields), context.temp_allocator)
+				values = make([]Value, len(type.fields), context.temp_allocator)
 				for &val, i in values {
 					ti := cg_type(ctx, type.fields[i].type)
 					val = {
@@ -2115,7 +2117,7 @@ cg_stmt :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global
 	return false
 }
 
-cg_stmt_list :: proc(ctx: ^CG_Context, builder: ^spv.Builder, stmts: []^ast.Stmt, global := false) -> (returned: bool) {
+cg_stmt_list :: proc(ctx: ^Context, builder: ^spv.Builder, stmts: []^ast.Stmt, global := false) -> (returned: bool) {
 	for stmt in stmts {
 		if cg_stmt(ctx, builder, stmt, global) {
 			returned = true
