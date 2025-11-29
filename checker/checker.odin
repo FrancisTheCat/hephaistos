@@ -795,10 +795,33 @@ resolve_constant :: proc(checker: ^Checker, e: ^Entity) {
 		type = check_type(checker, d.type_expr)
 	}
 
+	assign_type :: proc(dst, src: ^types.Type) {
+		size := size_of(types.Type)
+		switch v in src.variant {
+		case ^types.Struct:
+			size = size_of(types.Struct)
+		case ^types.Matrix:
+			size = size_of(types.Matrix)
+		case ^types.Vector:
+			size = size_of(types.Vector)
+		case ^types.Buffer:
+			size = size_of(types.Buffer)
+		case ^types.Proc:
+			size = size_of(types.Proc)
+		case ^types.Image:
+			size = size_of(types.Image)
+		case ^types.Enum:
+			size = size_of(types.Enum)
+		case ^types.Bit_Set:
+			size = size_of(types.Bit_Set)
+		}
+		mem.copy(dst, src, size)
+	}
+
 	if len(d.values) == 0 {
 		e.kind               = .Var
-		e.type               = type
 		d.types[value_index] = type
+		assign_type(e.type, type)
 		return
 	}
 
@@ -831,7 +854,7 @@ resolve_constant :: proc(checker: ^Checker, e: ^Entity) {
 	d.types[value_index]       = type
 	d.values[value_index].type = type
 
-	e.type = type
+	assign_type(e.type, type)
 }
 
 check_const_stmts :: proc(checker: ^Checker, stmts: []^ast.Stmt) {
