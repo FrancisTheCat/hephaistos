@@ -1587,7 +1587,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 			}
 
-			error(checker, v, "'%s' is not a variant of the enum type '%v'", v.selector.text, type_hint)
+			error(checker, v, "'%s' is not a variant of the enum type '%v'", v.selector.text, lhs.type)
 			return
 		}
 
