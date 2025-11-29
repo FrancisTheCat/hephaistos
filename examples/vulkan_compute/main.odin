@@ -1,4 +1,3 @@
-#+feature dynamic-literals
 package vk
 
 import "base:runtime"
@@ -159,9 +158,6 @@ debug_messenger_destroy :: proc(instance: vk.Instance, debug_messenger: vk.Debug
 	vk.DestroyDebugUtilsMessengerEXT(instance, debug_messenger, nil)
 }
 
-@(rodata)
-device_extensions: []cstring = {}
-
 @(require_results)
 pick_physical_device :: proc(instance: vk.Instance) -> (
 	best_physical_device: vk.PhysicalDevice,
@@ -188,18 +184,6 @@ pick_physical_device :: proc(instance: vk.Instance) -> (
 		vk.EnumerateDeviceExtensionProperties(physical_device, nil, &extension_count, nil)
 		extensions := make([]vk.ExtensionProperties, extension_count, context.temp_allocator)
 		vk.EnumerateDeviceExtensionProperties(physical_device, nil, &extension_count, &extensions[0])
-
-		for req in device_extensions {
-			found: bool
-			for &ext in extensions {
-				if cstring(&ext.extensionName[0]) == req {
-					found = true
-				}
-			}
-			if !found {
-				continue find_device_loop
-			}
-		}
 
 		queue_count: u32
 		vk.GetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_count, nil)
@@ -279,10 +263,6 @@ shader_create :: proc {
 	shader_create_spirv,
 }
 
-shader_destroy :: proc(ctx: Vulkan_Context, shader: vk.ShaderModule) {
-	vk.DestroyShaderModule(ctx.device, shader, nil)
-}
-
 @(require_results)
 device_create :: proc(physical_device: vk.PhysicalDevice, queue_index: u32) -> (device: vk.Device, queue: vk.Queue) {
 	priority: f32 = 1
@@ -311,13 +291,11 @@ device_create :: proc(physical_device: vk.PhysicalDevice, queue_index: u32) -> (
 	}
 
 	create_info := vk.DeviceCreateInfo {
-		sType                   = .DEVICE_CREATE_INFO,
-		queueCreateInfoCount    = u32(len(queue_create_infos)),
-		pQueueCreateInfos       = raw_data(queue_create_infos),
-		pEnabledFeatures        = nil,
-		enabledExtensionCount   = u32(len(device_extensions)),
-		ppEnabledExtensionNames = raw_data(device_extensions),
-		pNext                   = &features,
+		sType                = .DEVICE_CREATE_INFO,
+		queueCreateInfoCount = u32(len(queue_create_infos)),
+		pQueueCreateInfos    = raw_data(queue_create_infos),
+		pEnabledFeatures     = nil,
+		pNext                = &features,
 	}
 
 	if result := vk.CreateDevice(physical_device, &create_info, nil, &device); result != nil {
@@ -346,28 +324,6 @@ descriptor_pool_create :: proc(ctx: Vulkan_Context) -> (descriptor_pool: vk.Desc
 		os.exit(1)
 	}
 
-	return
-}
-
-@(require_results)
-descriptor_set_create :: proc(
-	device:                vk.Device,
-	descriptor_pool:       vk.DescriptorPool,
-	descriptor_set_layout: vk.DescriptorSetLayout,
-	allocator := context.allocator,
-) -> (descriptor_set: vk.DescriptorSet) {
-	descriptor_set_layout := descriptor_set_layout
-
-	alloc_info := vk.DescriptorSetAllocateInfo {
-		sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
-		descriptorPool     = descriptor_pool,
-		descriptorSetCount = 1,
-		pSetLayouts        = &descriptor_set_layout,
-	}
-	if result := vk.AllocateDescriptorSets(device, &alloc_info, &descriptor_set); result != nil {
-		fmt.eprintln("Failed to allocate descriptor sets:", result)
-		os.exit(1)
-	}
 	return
 }
 
@@ -703,7 +659,16 @@ compute_pipeline_create :: proc(
 		os.exit(1)
 	}
 
-	pipeline.descriptor_set = descriptor_set_create(ctx.device, ctx.descriptor_pool, pipeline.descriptor_set_layout)
+	alloc_info := vk.DescriptorSetAllocateInfo {
+		sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
+		descriptorPool     = ctx.descriptor_pool,
+		descriptorSetCount = 1,
+		pSetLayouts        = &pipeline.descriptor_set_layout,
+	}
+	if result := vk.AllocateDescriptorSets(ctx.device, &alloc_info, &pipeline.descriptor_set); result != nil {
+		fmt.eprintln("Failed to allocate descriptor sets:", result)
+		os.exit(1)
+	}
 
 	layout_create_info := vk.PipelineLayoutCreateInfo {
 		sType                  = .PIPELINE_LAYOUT_CREATE_INFO,
@@ -795,10 +760,10 @@ main :: proc() {
 	ctx.descriptor_pool = descriptor_pool_create(ctx)
 	defer vk.DestroyDescriptorPool(ctx.device, ctx.descriptor_pool, nil)
 	
-	compute_path   :: "compute.hep"
-	compute_source := #load(compute_path, string)
-	compute_shader := shader_create_hephaistos(ctx, compute_path, compute_source, { Compute_Constants, }) or_else panic("failed to create compute shader")
-	defer shader_destroy(ctx, compute_shader)
+	COMPUTE_PATH   :: "compute.hep"
+	compute_source := #load(COMPUTE_PATH, string)
+	compute_shader := shader_create_hephaistos(ctx, COMPUTE_PATH, compute_source, { Compute_Constants, }) or_else panic("failed to create compute shader")
+	defer vk.DestroyShaderModule(ctx.device, compute_shader, nil)
 
 	pipeline := compute_pipeline_create(ctx, compute_shader)
 	defer pipeline_destroy(ctx, pipeline)
@@ -900,7 +865,7 @@ main :: proc() {
 	}
 	vk.CmdPushConstants(ctx.command_buffer, pipeline.layout, { .COMPUTE, }, 0, size_of(Compute_Constants), &compute_constants)
 
-	vk.CmdDispatch(ctx.command_buffer, u32(w) / 8, u32(h) / 8, 1)
+	vk.CmdDispatch(ctx.command_buffer, u32(w), u32(h), 1)
 
 	image_memory_barrier(
 		ctx,
