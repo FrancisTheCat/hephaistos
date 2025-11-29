@@ -10,7 +10,7 @@ import "core:os"
 import "core:prof/spall"
 import glm "core:math/linalg/glsl"
 
-import hep ".."
+import hep "../.."
 
 import spv_tools "spirv-tools-odin"
 

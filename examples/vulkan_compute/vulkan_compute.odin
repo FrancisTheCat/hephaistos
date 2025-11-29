@@ -14,7 +14,7 @@ import "core:image/qoi"
 import stbi "vendor:stb/image"
 import vk   "vendor:vulkan"
 
-import hep ".."
+import hep "../.."
 
 foreign import libvulkan "system:libvulkan.so"
 
@@ -795,8 +795,8 @@ main :: proc() {
 	ctx.descriptor_pool = descriptor_pool_create(ctx)
 	defer vk.DestroyDescriptorPool(ctx.device, ctx.descriptor_pool, nil)
 	
-	compute_path   := "compute.hep"
-	compute_source := string(os.read_entire_file(compute_path, context.temp_allocator) or_else panic("failed to read compute shader file"))
+	compute_path   :: "compute.hep"
+	compute_source := #load(compute_path, string)
 	compute_shader := shader_create_hephaistos(ctx, compute_path, compute_source, { Compute_Constants, }) or_else panic("failed to create compute shader")
 	defer shader_destroy(ctx, compute_shader)
 
