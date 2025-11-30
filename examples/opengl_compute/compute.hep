@@ -15,5 +15,10 @@ u_tint: [4]f32
 @(compute_shader)
 main :: proc() {
 	coord        := $GlobalInvocationId.xy
-	output[coord] = u_tint * uniforms.tint * input[(coord * 2) % uniforms.image_size]
+	output[coord] = u_tint * uniforms.tint * 0.25 * (
+		input[(coord * 2) % uniforms.image_size + {0, 0}] +
+		input[(coord * 2) % uniforms.image_size + {0, 1}] +
+		input[(coord * 2) % uniforms.image_size + {1, 0}] +
+		input[(coord * 2) % uniforms.image_size + {1, 1}] \
+	)
 }

@@ -9,5 +9,10 @@ constants: #import(Compute_Constants)
 @(compute_shader)
 main :: proc() {
 	coord        := $GlobalInvocationId.xy
-	output[coord] = constants.tint * input[(coord * 2) % constants.image_size]
+	output[coord] = 0.25 * constants.tint * (
+		input[(coord * 2) % constants.image_size + {0, 0}] +
+		input[(coord * 2) % constants.image_size + {0, 1}] +
+		input[(coord * 2) % constants.image_size + {1, 0}] +
+		input[(coord * 2) % constants.image_size + {1, 1}] \
+	)
 }
