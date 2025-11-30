@@ -1,6 +1,5 @@
 package gl_cube
 
-import "core:fmt"
 import glm "core:math/linalg/glsl"
 import os "core:os/os2"
 import "core:strings"
@@ -15,12 +14,8 @@ WIDTH  :: 900
 HEIGHT :: 600
 
 @(require_results)
-compile_graphics_program :: proc(path: string, shared_types: []typeid = {}) -> (program: u32, ok: bool) {
-	source, err := os.read_entire_file(path, context.temp_allocator)
-	if err != nil {
-		fmt.eprintfln("Failed to read shader file: `%s`", path)
-		return
-	}
+compile_graphics_program :: proc($path: string, shared_types: []typeid = {}) -> (program: u32, ok: bool) {
+	source := #load(path, string)
 	spirv, errors := hep.compile_shader(
 		string(source),
 		path,

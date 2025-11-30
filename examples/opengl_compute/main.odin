@@ -4,6 +4,7 @@ import "base:runtime"
 
 import "core:fmt"
 import os "core:os/os2"
+import "core:slice"
 import "core:strings"
 
 import gl "vendor:OpenGL"
@@ -33,6 +34,8 @@ compile_compute_shaders :: proc(
 		}
 		return
 	}
+
+	_ = os.write_entire_file("a.spv", slice.to_bytes(spirv))
 
 	shaders: [N]u32
 	for &s in shaders {
@@ -120,6 +123,7 @@ main :: proc() {
 		Input_Image,
 		Output_Image,
 		Uniform_Buffer,
+		Storage_Buffer,
 	}
 
 	Uniform_Location :: enum {
@@ -159,12 +163,21 @@ main :: proc() {
 
 	ubo: u32
 	gl.CreateBuffers(1, &ubo)
-	gl.NamedBufferStorage(ubo, size_of(Compute_Uniforms), nil, gl.DYNAMIC_STORAGE_BIT)
+	gl.NamedBufferStorage(
+		ubo,
+		size_of(Compute_Uniforms),
+		&Compute_Uniforms{
+			image_size = { w, h, },
+			tint       = 1,
+		},
+		0,
+	)
 	gl.BindBufferRange(gl.UNIFORM_BUFFER, u32(Binding_Point.Uniform_Buffer), ubo, 0, size_of(Compute_Uniforms))
-	gl.NamedBufferSubData(ubo, 0, size_of(Compute_Uniforms), &Compute_Uniforms {
-		image_size = { w, h, },
-		tint       = 1,
-	})
+
+	ssbo: u32
+	gl.CreateBuffers(1, &ssbo)
+	gl.NamedBufferStorage(ssbo, size_of([4]f32), &[4]f32{0, 1, 0, 1}, 0)
+	gl.BindBufferRange(gl.SHADER_STORAGE_BUFFER, u32(Binding_Point.Storage_Buffer), ssbo, 0, size_of([4]f32))
 
 	gl.Uniform4f(i32(Uniform_Location.Tint), 1, 0.5, 0.5, 1)
 	

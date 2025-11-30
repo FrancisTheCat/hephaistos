@@ -500,6 +500,10 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			flags += { .Readonly, }
 		}
 		if len(values) == 0 {
+			if explicit_type == nil {
+				explicit_type = types.t_invalid
+			}
+			check_decl_interface_type(checker, v, explicit_type)
 			for name in names {
 				entity_kind := Entity_Kind.Var
 				scope_insert_entity(checker, entity_new(entity_kind, name, explicit_type, decl = v, flags = flags, allocator = checker.allocator))
@@ -588,10 +592,48 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 	return
 }
 
+check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type: ^types.Type) {
+	@(static, rodata)
+	interface_kind_names := [ast.Interface_Kind]string {
+		.None           = "none",
+		.Uniform        = "uniform",
+		.Uniform_Buffer = "uniform buffer",
+		.Push_Constant  = "push constant",
+		.Storage_Buffer = "storage buffer",
+	}
+	
+	if decl.interface == .None || type == nil || type.kind == .Invalid {
+		return
+	}
+
+	if decl.interface == .Uniform {
+		if types.is_buffer(type) || types.is_struct(type) {
+			error(checker, decl.type_expr, "type of uniform variable can not be a composite type")
+		}
+		return
+	}
+
+	if !(types.is_buffer(type) || types.is_struct(type)) {
+		error(checker, decl.type_expr, "type of %s variable has to be a composite type", interface_kind_names[decl.interface])
+	}
+}
+
 check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant: bool) {
 	decl.location = -1
 	decl.binding  = -1
 	seen := make(map[string]struct{}, context.temp_allocator)
+
+	binding_required  := false
+	location_required := false
+
+	@(static, rodata)
+	interface_kind_names := [ast.Interface_Kind]string {
+		.None           = "none",
+		.Uniform        = "uniform",
+		.Uniform_Buffer = "uniform_buffer",
+		.Push_Constant  = "push_constant",
+		.Storage_Buffer = "storage_buffer",
+	}
 
 	for a in decl.attributes {
 		if a.ident.text in seen {
@@ -600,20 +642,49 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 		seen[a.ident.text] = {}
 
 		switch a.ident.text {
-		case "uniform":
-			decl.uniform = true
+		case "uniform_buffer":
+			if decl.interface != nil {
+				error(checker, a.ident, "the '%s' and '%s' attributes are mutually exclusive", interface_kind_names[decl.interface], a.ident.text)
+			} else {
+				decl.interface = .Uniform_Buffer
+			}
+			binding_required = true
 			if a.value != nil {
-				error(checker, a.value, "'uniform' attribute does not accept a value")
+				error(checker, a.value, "'%s' attribute does not accept a value", a.ident.text)
+			}
+		case "uniform":
+			if decl.interface != nil {
+				error(checker, a.ident, "the '%s' and '%s' attributes are mutually exclusive", interface_kind_names[decl.interface], a.ident.text)
+			} else {
+				decl.interface = .Uniform
+			}
+			location_required = true
+			if a.value != nil {
+				error(checker, a.value, "'%s' attribute does not accept a value", a.ident.text)
+			}
+		case "storage_buffer":
+			if decl.interface != nil {
+				error(checker, a.ident, "the '%s' and '%s' attributes are mutually exclusive", interface_kind_names[decl.interface], a.ident.text)
+			} else {
+				decl.interface = .Storage_Buffer
+			}
+			binding_required = true
+			if a.value != nil {
+				error(checker, a.value, "'%s' attribute does not accept a value", a.ident.text)
 			}
 		case "push_constant":
-			decl.push_constant = true
+			if decl.interface != nil {
+				error(checker, a.ident, "the '%s' and '%s' attributes are mutually exclusive", interface_kind_names[decl.interface], a.ident.text)
+			} else {
+				decl.interface = .Push_Constant
+			}
 			if a.value != nil {
-				error(checker, a.value, "'push_constant' attribute does not accept a value")
+				error(checker, a.value, "'%s' attribute does not accept a value", a.ident.text)
 			}
 		case "readonly":
 			decl.readonly = true
 			if a.value != nil {
-				error(checker, a.value, "'readonly' attribute does not accept a value")
+				error(checker, a.value, "'%s' attribute does not accept a value", a.ident.text)
 			}
 		case "binding":
 			if a.value == nil {
@@ -621,10 +692,10 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 				break
 			}
 			value := check_expr(checker, a.value)
-			if val, ok := value.value.(i64); ok {
+			if val, ok := value.value.(i64); ok && val >= 0 {
 				decl.binding = int(val)
 			} else {
-				error(checker, value, "'binding' attribute value must be a constant integer")
+				error(checker, value, "'binding' attribute value must be a constant non-negative integer")
 			}
 		case "location":
 			if a.value == nil {
@@ -632,10 +703,10 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 				break
 			}
 			value := check_expr(checker, a.value)
-			if val, ok := value.value.(i64); ok {
+			if val, ok := value.value.(i64); ok && val >= 0 {
 				decl.location = int(val)
 			} else {
-				error(checker, value, "'location' attribute value must be a constant integer")
+				error(checker, value, "'location' attribute value must be a constant non-negative integer")
 			}
 		case "descriptor_set":
 			if a.value == nil {
@@ -643,10 +714,10 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 				break
 			}
 			value := check_expr(checker, a.value)
-			if val, ok := value.value.(i64); ok {
+			if val, ok := value.value.(i64); ok && val >= 0 {
 				decl.descriptor_set = int(val)
 			} else {
-				error(checker, value, "'descriptor_set' attribute value must be a constant integer")
+				error(checker, value, "'descriptor_set' attribute value must be a constant non-negative integer")
 			}
 		case "link_name":
 			if a.value == nil {
@@ -709,8 +780,40 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 		error(checker, decl, "'local_size' attribute can only be applied to compute shaders")
 	}
 
-	if decl.uniform && decl.push_constant {
-		error(checker, decl, "the 'push_constant' and 'uniform' attributes are mutually exclusive")
+	if binding_required && decl.binding == -1 {
+		error(
+			checker,
+			decl,
+			"variable with '%s' attribute requires an explicit binding to be specified",
+			interface_kind_names[decl.interface],
+		)
+	}
+
+	if location_required && decl.location == -1 {
+		error(
+			checker,
+			decl,
+			"variable with '%s' attribute requires an explicit location to be specified",
+			interface_kind_names[decl.interface],
+		)
+	}
+
+	if decl.interface != .None {
+		if len(decl.values) != 0 {
+			error(
+				checker,
+				decl,
+				"variable with '%s' attribute can not have any values",
+				interface_kind_names[decl.interface],
+			)
+		} else if len(decl.lhs) != 1 {
+			error(
+				checker,
+				decl,
+				"attribute '%s' can not be applied to a declaration of multiple variables",
+				interface_kind_names[decl.interface],
+			)
+		}
 	}
 }
 
@@ -819,6 +922,7 @@ resolve_constant :: proc(checker: ^Checker, e: ^Entity) {
 	}
 
 	if len(d.values) == 0 {
+		check_decl_interface_type(checker, e.decl.derived_decl.(^ast.Decl_Value), type)
 		e.kind               = .Var
 		d.types[value_index] = type
 		assign_type(e.type, type)
@@ -2584,7 +2688,7 @@ check_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 	return types.t_invalid
 }
 
-error_checker_operand :: proc(checker: ^Checker, operand: Operand, message: string, args: ..any) {
+error_operand :: proc(checker: ^Checker, operand: Operand, message: string, args: ..any) {
 	append(&checker.errors, tokenizer.Error {
 		location = operand.expr.start,
 		end     = operand.expr.end,
@@ -2592,7 +2696,7 @@ error_checker_operand :: proc(checker: ^Checker, operand: Operand, message: stri
 	})
 }
 
-error_checker_location :: proc(checker: ^Checker, location: tokenizer.Location, message: string, args: ..any) {
+error_location :: proc(checker: ^Checker, location: tokenizer.Location, message: string, args: ..any) {
 	append(&checker.errors, tokenizer.Error {
 		location = location,
 		end      = location,
@@ -2600,7 +2704,7 @@ error_checker_location :: proc(checker: ^Checker, location: tokenizer.Location, 
 	})
 }
 
-error_checker_start_end :: proc(checker: ^Checker, start, end: tokenizer.Location, message: string, args: ..any) {
+error_start_end :: proc(checker: ^Checker, start, end: tokenizer.Location, message: string, args: ..any) {
 	append(&checker.errors, tokenizer.Error {
 		location = start,
 		end      = end,
@@ -2608,7 +2712,7 @@ error_checker_start_end :: proc(checker: ^Checker, start, end: tokenizer.Locatio
 	})
 }
 
-error_checker_token :: proc(checker: ^Checker, token: tokenizer.Token, message: string, args: ..any) {
+error_token :: proc(checker: ^Checker, token: tokenizer.Token, message: string, args: ..any) {
 	end := token.location
 	end.offset += len(token.text)
 	end.column += len(token.text)
@@ -2619,7 +2723,7 @@ error_checker_token :: proc(checker: ^Checker, token: tokenizer.Token, message: 
 	})
 }
 
-error_checker_ast_node :: proc(checker: ^Checker, ast_node: ^ast.Node, message: string, args: ..any) {
+error_ast_node :: proc(checker: ^Checker, ast_node: ^ast.Node, message: string, args: ..any) {
 	append(&checker.errors, tokenizer.Error {
 		location = ast_node.start,
 		end      = ast_node.end,
@@ -2628,9 +2732,9 @@ error_checker_ast_node :: proc(checker: ^Checker, ast_node: ^ast.Node, message: 
 }
 
 error :: proc {
-	error_checker_operand,
-	error_checker_location,
-	error_checker_token,
-	error_checker_ast_node,
-	error_checker_start_end,
+	error_operand,
+	error_location,
+	error_token,
+	error_ast_node,
+	error_start_end,
 }

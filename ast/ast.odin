@@ -231,6 +231,14 @@ Type_Bit_Set :: struct {
 }
 
 
+Interface_Kind :: enum {
+	None = 0,
+	Uniform,
+	Uniform_Buffer,
+	Push_Constant,
+	Storage_Buffer,
+}
+
 Decl_Value :: struct {
 	using node:     Decl,
 	lhs:            []^Expr,
@@ -238,8 +246,6 @@ Decl_Value :: struct {
 	values:         []^Expr,
 	mutable:        bool,
 	types:          []^types.Type,
-	uniform:        bool,
-	push_constant:  bool,
 	readonly:       bool,
 	binding:        int,
 	location:       int,
@@ -247,6 +253,7 @@ Decl_Value :: struct {
 	link_name:      string,
 	local_size:     [3]i32,
 	shader_stage:   Shader_Stage,
+	interface:      Interface_Kind,
 }
 
 Stmt_Return :: struct {

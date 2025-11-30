@@ -8,7 +8,7 @@ SHADOW_PASS :: #config(SHADOW_PASS, false)
 vs_constants: #import(Vertex_Shader_Uniforms)
 
 when !SHADOW_PASS {
-	@(uniform, binding = Binding_Location.Shadow_Uniforms)
+	@(uniform_buffer, binding = Binding_Location.Shadow_Uniforms)
 	shadow_uniforms: #import(Shadow_Uniforms)
 }
 
@@ -39,7 +39,7 @@ vertex_main :: proc(
 @(binding = Binding_Location.Image)
 img: image[2][2]f32
 
-@(binding = Binding_Location.Some_Buffer)
+@(storage_buffer, binding = Binding_Location.Some_Buffer)
 some_buffer: []struct {
 	a, b: [4]f32,
 }

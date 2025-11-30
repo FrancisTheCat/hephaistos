@@ -6,16 +6,19 @@ input:  image[2][4]f32
 @(binding = Binding.Output_Image)
 output: image[2][4]f32
 
-@(uniform, binding = Binding.Uniform_Buffer)
+@(uniform_buffer, binding = Binding.Uniform_Buffer)
 uniforms: #import(Compute_Uniforms)
 
 @(uniform, location = Location.Tint)
 u_tint: [4]f32
 
+@(storage_buffer, readonly, binding = Binding.Storage_Buffer)
+storage_buffer: [][4]f32
+
 @(compute_shader)
 main :: proc() {
 	coord        := $GlobalInvocationId.xy
-	output[coord] = u_tint * uniforms.tint * 0.25 * (
+	output[coord] = storage_buffer[0] * u_tint * uniforms.tint * 0.25 * (
 		input[(coord * 2) % uniforms.image_size + {0, 0}] +
 		input[(coord * 2) % uniforms.image_size + {0, 1}] +
 		input[(coord * 2) % uniforms.image_size + {1, 0}] +

@@ -31,26 +31,6 @@ token_advance :: proc(parser: ^Parser) -> (t: tokenizer.Token) {
 	return
 }
 
-error_parser_start_end :: proc(parser: ^Parser, start, end: tokenizer.Location, format: string, args: ..any) {
-	append(&parser.errors, tokenizer.Error {
-		location = start,
-		end      = end,
-		message  = fmt.aprintf(format, ..args, allocator = parser.error_allocator),
-	})
-}
-
-error_parser_single_token :: proc(parser: ^Parser, token: tokenizer.Token, format: string, args: ..any) {
-	append(&parser.errors, tokenizer.Error {
-		location = token.location,
-		end      = {
-			line   = token.location.line,
-			column = token.location.column + len(token.text),
-			offset = token.location.offset + len(token.text),
-		},
-		message  = fmt.aprintf(format, ..args, allocator = parser.error_allocator),
-	})
-}
-
 token_expect :: proc(parser: ^Parser, kind: tokenizer.Token_Kind, after: string = "") -> (token: tokenizer.Token, ok: bool) {
 	token = token_advance(parser)
 	if token.kind != kind {
@@ -1048,7 +1028,27 @@ parser_at_end :: proc(parser: ^Parser) -> bool {
 	return token_peek(parser).kind == .EOF
 }
 
+error_start_end :: proc(parser: ^Parser, start, end: tokenizer.Location, format: string, args: ..any) {
+	append(&parser.errors, tokenizer.Error {
+		location = start,
+		end      = end,
+		message  = fmt.aprintf(format, ..args, allocator = parser.error_allocator),
+	})
+}
+
+error_single_token :: proc(parser: ^Parser, token: tokenizer.Token, format: string, args: ..any) {
+	append(&parser.errors, tokenizer.Error {
+		location = token.location,
+		end      = {
+			line   = token.location.line,
+			column = token.location.column + len(token.text),
+			offset = token.location.offset + len(token.text),
+		},
+		message  = fmt.aprintf(format, ..args, allocator = parser.error_allocator),
+	})
+}
+
 error :: proc {
-	error_parser_start_end,
-	error_parser_single_token,
+	error_start_end,
+	error_single_token,
 }

@@ -1,4 +1,4 @@
-@(uniform, binding = 0)
+@(uniform_buffer, binding = 0)
 uniforms: #import(Shader_Uniforms)
 
 @(vertex_shader)

@@ -209,7 +209,7 @@ cg_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl, global: b
 
 	switch v in decl.derived_decl {
 	case ^ast.Decl_Value:
-		if v.uniform {
+		if v.interface == .Uniform || v.interface == .Uniform_Buffer {
 			value_builder     = nil
 			decl_builder      = &ctx.globals
 			storage_class     = .Uniform
@@ -219,13 +219,23 @@ cg_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl, global: b
 			annotate          = true
 		}
 
-		if v.push_constant {
+		if v.interface == .Push_Constant {
 			value_builder     = nil
 			decl_builder      = &ctx.globals
 			storage_class     = .Push_Constant
 			spv_storage_class = .PushConstant
 			flags             = { .Block, .Explicit_Layout, }
 			has_nil_value     = false
+		}
+
+		if v.interface == .Storage_Buffer {
+			value_builder     = nil
+			decl_builder      = &ctx.globals
+			storage_class     = .Storage_Buffer
+			spv_storage_class = .StorageBuffer
+			flags             = { .Block, .Explicit_Layout, }
+			has_nil_value     = false
+			annotate          = true
 		}
 
 		prev_link_name := ctx.link_name
@@ -252,14 +262,6 @@ cg_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl, global: b
 						assert(global)
 						storage_class     = .Uniform_Constant
 						spv_storage_class = .UniformConstant
-						has_nil_value     = false
-						annotate          = true
-					}
-					if types.is_buffer(type) {
-						assert(global)
-						storage_class     = .Storage_Buffer
-						spv_storage_class = .StorageBuffer
-						flags             = { .Block, .Explicit_Layout, }
 						has_nil_value     = false
 						annotate          = true
 					}
@@ -297,6 +299,7 @@ cg_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl, global: b
 					}
 					id := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
 					if !global {
+						assert(value_builder != nil)
 						init := cg_expr(ctx, value_builder, value)
 						// if v.type_expr != nil {
 						// 	init.id = cg_cast(ctx, builder, init, v.type_expr.type)
