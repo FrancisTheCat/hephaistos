@@ -2,13 +2,11 @@ package vk
 
 import "base:runtime"
 
-import "core:bytes"
 import "core:fmt"
 import os "core:os/os2"
 @(require)
 import "core:mem"
 import "core:strings"
-import "core:image/qoi"
 
 import stbi "vendor:stb/image"
 import vk   "vendor:vulkan"
@@ -902,13 +900,8 @@ main :: proc() {
 	mapped := cast([^]byte)allocation_map(ctx, staging_buffer.allocation, vk.DeviceSize(w * h * 4))
 	defer allocation_unmap(ctx, staging_buffer.allocation)
 
-	image := qoi.Image {
-		width    = int(w),
-		height   = int(h),
-		channels = 4,
-		depth    = 8,
-	}
-	image.pixels.buf.allocator = context.temp_allocator
-	bytes.buffer_init(&image.pixels, mapped[:w * h * 4])
-	qoi.save("output.qoi", &image)
+	pixels := make([]byte, w * h * 4, context.temp_allocator)
+	copy(pixels, mapped[:w * h * 4])
+
+	stbi.write_png("output.png", w, h, 4, raw_data(pixels), 0)
 }
