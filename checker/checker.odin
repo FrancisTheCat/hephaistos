@@ -876,6 +876,9 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 		}
 
 		flags: Entity_Flags
+		if d.readonly {
+			flags += { .Readonly, }
+		}
 		entity_kind := Entity_Kind.Invalid
 		for name in names {
 			type := types.new_any(checker.allocator)
@@ -1592,15 +1595,14 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			operand.mode = .Type
 		case .Var:
 			operand.mode = .LValue
+			if .Readonly in e.flags {
+				operand.mode = .RValue
+			}
 		case .Proc:
 			operand.mode = .Proc
 		case .Builtin:
 			operand.mode       = .Builtin
 			operand.builtin_id = e.builtin_id
-		}
-
-		if .Readonly in e.flags {
-			operand.mode = .RValue
 		}
 
 	case ^ast.Expr_Interface:
@@ -2394,7 +2396,6 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			}
 
 			operand.type = image.texel_type
-			operand.mode = .LValue
 		}
 
 		if operand.type.kind == .Invalid {
