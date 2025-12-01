@@ -253,14 +253,8 @@ cg_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl, global: b
 		if v.mutable {
 			if len(v.values) == 0 {
 				for type, i in v.types {
-					storage_class     := storage_class
-					spv_storage_class := spv_storage_class
-					has_nil_value     := has_nil_value
-					annotate          := annotate
-
-					if types.is_sampler(type) || types.is_image(type) {
+					if types.is_sampler(type) || types.is_image(type) && v.interface == .Uniform {
 						assert(len(v.types) == 1)
-						assert(global)
 						storage_class     = .Uniform_Constant
 						spv_storage_class = .UniformConstant
 						has_nil_value     = false
