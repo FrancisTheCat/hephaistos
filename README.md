@@ -55,6 +55,24 @@ spirv_code, errors := hephaistos.compile_shader(
 )
 ```
 
+### Attributes
+| Attribute | Description |
+| --- | --- |
+| `uniform` | used for OpenGL style uniforms of type scalar, vector or matrix and for images/samplers, requires `location`/`binding` attribute for OpenGL style uniforms/textures respectively |
+| `uniform_buffer` | Uniform buffer of type struct or array, requires `binding` attribute |
+| `storage_buffer` | Storage buffer of type struct or array, requires `binding` attribute |
+| `push_constant` | Vulkan push constant of type struct or array, requires `binding` attribute |
+| `binding` | Binding point of interface variable |
+| `location` | Uniform location for interface variables with `uniform` attribute |
+| `descriptor_set` | Descriptor set of interface variable, defaults to 0 |
+| `fragment_shader` | Fragment Shader |
+| `vertex_shader` | Vertex Shader |
+| `compute_shader` | Compute Shader |
+| `geometry_shader` | Geometry Shader |
+| `local_size` | Compute shader local size, defaults to `{1, 1, 1}` |
+| `read_only` | Prohibit writes to variable |
+| `link_name` | Set link name of shader entry point, defaults to name of procedure |
+
 ## OpenGL
 When using Hephaistos with OpenGL you will have to specify the SPIR-V version as 1.0:
 ```odin
