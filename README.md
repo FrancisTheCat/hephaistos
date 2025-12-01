@@ -1,3 +1,5 @@
+# WARNING: Still in early development
+
 # Hephaistos
 Hephaistos is a shading language heavily inspired by the [Odin](https://odin-lang.org/) programming language.
 
@@ -81,6 +83,15 @@ hephaistos.compile_shader(..., spirv_version = hephaistos.SPIR_V_VERSION_1_0, ..
 
 ## Vulkan
 When using Hephaistos with Vulkan the "scalarBlockLayout" feature needs to be enabled for the physical device (standardized in 1.2, available as an extension otherwise; As of 1.4 support for scalarBlockLayout is required).
+
+### Known Issues
+- `break`/`continue` not implemented
+- Matrix subcasting not implemented
+- Complex numbers and Quaternion not implemented
+- Bitset operations not implemented
+- Matrix shader stage inputs/outputs are broken
+- Multiple return values not handeled very well in many cases
+- Loads of stuff other missing, eg. Importing other files, load of different shader stages 
 
 # Special Thanks
 Without [Ginger Bill](https://github.com/gingerBill/) there is no world where this compiler would exist. A huge thank you for writing the Odin compiler and also for writing [titania](https://github.com/gingerBill/titania), the most readable compiler I have ever seen.
