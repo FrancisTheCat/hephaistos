@@ -30,7 +30,7 @@ vertex_main :: proc(
 @(uniform, binding = 0)
 fs_uniforms: #import(Fragment_Shader_Uniforms)
 
-@(binding = 1)
+@(uniform, binding = 1)
 texture: sampler[2][3]f32
 
 @(fragment_shader)
