@@ -27,7 +27,7 @@ vertex_main :: proc(
 
 // FRAGMENT SHADER
 
-@(uniform, binding = 0)
+@(uniform_buffer, binding = 0)
 fs_uniforms: #import(Fragment_Shader_Uniforms)
 
 @(uniform, binding = 1)
