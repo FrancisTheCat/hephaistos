@@ -56,6 +56,33 @@ Vulkan_Version :: bit_field u32 {
 	major: u32 | 10,
 }
 
+@(require_results)
+shader_create_hephaistos :: proc(
+	ctx:          Vulkan_Context,
+	path:         string,
+	source:       string,
+	shared_types: []typeid                   = {},
+	defines:      map[string]hep.Const_Value = {},
+) -> (module: vk.ShaderModule, ok: bool) {
+	code, errors := hep.compile_shader(
+		source,
+		path,
+		defines         = defines,
+		shared_types    = shared_types,
+		allocator       = context.temp_allocator,
+		error_allocator = context.temp_allocator,
+	)
+	if len(errors) != 0 {
+		lines := strings.split_lines(source, context.temp_allocator)
+		for error in errors {
+			hep.print_error(os.to_stream(os.stderr), path, lines, error)
+		}
+		return
+	}
+	module, ok = shader_create_spirv(ctx, code)
+	return
+}
+
 debug_callback_proc :: proc "system" (
 	messageSeverity: vk.DebugUtilsMessageSeverityFlagsEXT,
 	messageTypes:    vk.DebugUtilsMessageTypeFlagsEXT,
@@ -229,33 +256,6 @@ shader_create_spirv :: proc(ctx: Vulkan_Context, data: []u32) -> (module: vk.Sha
 	return
 }
 
-@(require_results)
-shader_create_hephaistos :: proc(
-	ctx:          Vulkan_Context,
-	path:         string,
-	source:       string,
-	shared_types: []typeid                   = {},
-	defines:      map[string]hep.Const_Value = {},
-) -> (module: vk.ShaderModule, ok: bool) {
-	code, errors := hep.compile_shader(
-		source,
-		path,
-		defines         = defines,
-		shared_types    = shared_types,
-		allocator       = context.temp_allocator,
-		error_allocator = context.temp_allocator,
-	)
-	if len(errors) != 0 {
-		lines := strings.split_lines(source, context.temp_allocator)
-		for error in errors {
-			hep.print_error(os.to_stream(os.stderr), path, lines, error)
-		}
-		return
-	}
-	module, ok = shader_create_spirv(ctx, code)
-	return
-}
-
 shader_create :: proc {
 	shader_create_hephaistos,
 	shader_create_spirv,
@@ -278,12 +278,14 @@ device_create :: proc(physical_device: vk.PhysicalDevice, queue_index: u32) -> (
 		features = {
 			samplerAnisotropy = true,
 		},
-		pNext    = &vk.PhysicalDeviceVulkan13Features {
-			sType            = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-			dynamicRendering = true,
-			pNext            = &vk.PhysicalDeviceScalarBlockLayoutFeatures {
-				sType             = .PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES,
-				scalarBlockLayout = true,
+		pNext = &vk.PhysicalDeviceVulkan12Features {
+			sType               = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+			bufferDeviceAddress = true,
+			scalarBlockLayout   = true,
+			pNext               = &vk.PhysicalDeviceVulkan11Features {
+				sType                         = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+				variablePointers              = true,
+				variablePointersStorageBuffer = true,
 			},
 		},
 	}
@@ -399,7 +401,7 @@ buffer_create :: proc(
 	    usage       = usage,
 	    sharingMode = .EXCLUSIVE,
     }, nil, &buffer); result != nil {
-		fmt.eprintln("Failed to create vertex buffer:", result)
+		fmt.eprintln("Failed to create buffer:", result)
 		os.exit(1)
     }
 
@@ -407,11 +409,11 @@ buffer_create :: proc(
 }
 
 @(require_results)
-buffer_allocate :: proc(ctx: Vulkan_Context, buffer: vk.Buffer, properties: vk.MemoryPropertyFlags) -> (allocation: Vulkan_Allocation) {
+buffer_allocate :: proc(ctx: Vulkan_Context, buffer: vk.Buffer, properties: vk.MemoryPropertyFlags, shader_addressable := false) -> (allocation: Vulkan_Allocation) {
 	requirements: vk.MemoryRequirements
 	vk.GetBufferMemoryRequirements(ctx.device, buffer, &requirements)
 
-	allocation = vulkan_allocate(ctx, requirements.size, requirements.memoryTypeBits, properties)
+	allocation = vulkan_allocate(ctx, requirements.size, requirements.memoryTypeBits, properties, shader_addressable)
 	vk.BindBufferMemory(ctx.device, buffer, allocation.memory, 0)
 	return
 }
@@ -453,11 +455,16 @@ vulkan_allocate :: proc(
 	size:             vk.DeviceSize,
 	memory_type_bits: u32,
 	properties:       vk.MemoryPropertyFlags,
+	shader_addressable := false,
 ) -> (allocation: Vulkan_Allocation) {
 	alloc_info := vk.MemoryAllocateInfo {
 		sType           = .MEMORY_ALLOCATE_INFO,
 		allocationSize  = size,
 		memoryTypeIndex = find_memory_type(ctx.physical_device, memory_type_bits, properties) or_else panic("Failed to find memory type"),
+		pNext           = &vk.MemoryAllocateFlagsInfo {
+			sType = .MEMORY_ALLOCATE_FLAGS_INFO,
+			flags = { .DEVICE_ADDRESS, },
+		} if shader_addressable else nil,
 	}
 
 	if result := vk.AllocateMemory(ctx.device, &alloc_info, nil, &allocation.memory); result != nil {
@@ -625,6 +632,7 @@ buffer_create_with_data :: proc(ctx: Vulkan_Context, data: $S/[]$E) -> (buffer: 
 Compute_Constants :: struct {
 	image_size: [2]i32,
 	tint:       [4]f32,
+	buffer:     hep.Buffer_Address(struct { a, b: f32, }),
 }
 
 @(require_results)

@@ -27,6 +27,7 @@ Storage_Class :: enum {
 	Push_Constant,
 	Uniform_Constant,
 	Storage_Buffer,
+	Physical_Storage_Buffer,
 	Image,
 }
 
@@ -78,7 +79,6 @@ Context :: struct {
 	},
 
 	meta:               spv.Builder,
-	extensions:         spv.Builder,
 	ext_inst:           spv.Builder,
 	memory_model:       spv.Builder,
 	entry_points:       spv.Builder,
@@ -94,6 +94,7 @@ Context :: struct {
 	checker:            ^checker.Checker,
 	scopes:             [dynamic]Scope,
 
+	extensions:         map[string]struct{},
 	capabilities:       map[spv.Capability]struct{},
 	referenced_globals: map[spv.Id]struct{},
 
@@ -236,6 +237,8 @@ cg_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl, global: b
 		}
 
 		if v.interface == .Storage_Buffer {
+			ctx.extensions["SPV_KHR_storage_buffer_storage_class"] = {}
+
 			value_builder     = nil
 			decl_builder      = &ctx.globals
 			storage_class     = .Storage_Buffer
@@ -410,8 +413,6 @@ generate :: proc(
 
 	ctx.capabilities[.Shader] = {}
 
-	spv.OpExtension(&ctx.extensions, "SPV_KHR_storage_buffer_storage_class")
-
 	spv_glsl.extension_id = spv.OpExtInstImport(&ctx.ext_inst, "GLSL.std.450")
 	spv.OpMemoryModel(&ctx.memory_model, .Logical, .Simple)
 
@@ -421,10 +422,12 @@ generate :: proc(
 	for c in ctx.capabilities {
 		spv.OpCapability(&ctx.meta, c)
 	}
+	for e in ctx.extensions {
+		spv.OpExtension(&ctx.meta, e)
+	}
 
 	spirv := slice.concatenate([][]u32{
 		ctx.meta.data[:],
-		ctx.extensions.data[:],
 		ctx.ext_inst.data[:],
 		ctx.memory_model.data[:],
 		ctx.entry_points.data[:],
@@ -588,6 +591,8 @@ cg_type_ptr_from_type :: proc(ctx: ^Context, type_info: ^Type_Info, storage_clas
 			spv_storage_class = .UniformConstant
 		case .Storage_Buffer:
 			spv_storage_class = .StorageBuffer
+		case .Physical_Storage_Buffer:
+			spv_storage_class = .PhysicalStorageBuffer
 		case .Image:
 			spv_storage_class = .Image
 		}
@@ -762,13 +767,24 @@ cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> ^Ty
 	case .Buffer:
 		type := type.variant.(^types.Buffer)
 		elem := cg_type(ctx, type.elem, { .Explicit_Layout, })
-		info.array_type = spv.OpTypeRuntimeArray(&ctx.types, elem.type)
-		info.type       = spv.OpTypeStruct(&ctx.types, info.array_type)
-		info.array_ptr  = spv.OpTypePointer(&ctx.types, .StorageBuffer, info.array_type)
-		spv.OpDecorate(&ctx.annotations, info.array_type, .ArrayStride, u32(type.elem.size))
-		if .Block in flags {
-			spv.OpDecorate(&ctx.annotations, info.type, .Block)
-			spv.OpMemberDecorate(&ctx.annotations, info.type, 0, .Offset, 0)
+		if type.physical {
+			ctx.extensions["SPV_KHR_physical_storage_buffer"] = {}
+			ctx.capabilities[.PhysicalStorageBufferAddresses] = {}
+			info.type = spv.OpTypePointer(&ctx.types, .PhysicalStorageBuffer, elem.type)
+			spv.OpDecorate(&ctx.annotations, info.type, .ArrayStride, u32(type.elem.size))
+			if .Block in flags {
+				spv.OpDecorate(&ctx.annotations, info.type, .Block)
+				spv.OpMemberDecorate(&ctx.annotations, info.type, 0, .Offset, 0)
+			}
+		} else {
+			info.array_type = spv.OpTypeRuntimeArray(&ctx.types, elem.type)
+			info.type       = spv.OpTypeStruct(&ctx.types, info.array_type)
+			info.array_ptr  = spv.OpTypePointer(&ctx.types, .StorageBuffer, info.array_type)
+			spv.OpDecorate(&ctx.annotations, info.array_type, .ArrayStride, u32(type.elem.size))
+			if .Block in flags {
+				spv.OpDecorate(&ctx.annotations, info.type, .Block)
+				spv.OpMemberDecorate(&ctx.annotations, info.type, 0, .Offset, 0)
+			}
 		}
 	case .Invalid, .Enum, .Bit_Set:
 		unreachable()
@@ -936,7 +952,11 @@ cg_deref :: proc(ctx: ^Context, builder: ^spv.Builder, value: Value) -> spv.Id {
 		for f, i in type.fields {
 			field_ti  := cg_type(ctx, f.type)
 			field_ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, field_ti, value.storage_class), value.id, cg_constant(ctx, i64(i), nil).id)
-			append(&members, spv.OpLoad(builder, field_ti.type, field_ptr))
+			if value.storage_class == .Physical_Storage_Buffer {
+				append(&members, spv.OpLoad(builder, field_ti.type, field_ptr, spv.MemoryAccess{ .Aligned, }, u32(f.type.align)))
+			} else {
+				append(&members, spv.OpLoad(builder, field_ti.type, field_ptr))
+			}
 		}
 		return spv.OpCompositeConstruct(builder, cg_type(ctx, value.type).type, ..members[:])
 	}
@@ -973,8 +993,10 @@ cg_deref :: proc(ctx: ^Context, builder: ^spv.Builder, value: Value) -> spv.Id {
 			return texel
 		}
 		return texel
-	case nil:
+	case .By_Value:
 		return value.id
+	case .Physical_Storage_Buffer:
+		return spv.OpLoad(builder, cg_type(ctx, value.type).type, value.id, spv.MemoryAccess { .Aligned, }, u32(value.type.align))
 	case:
 		return spv.OpLoad(builder, cg_type(ctx, value.type).type, value.id)
 	}
@@ -1767,7 +1789,24 @@ _cg_expr :: proc(
 		if types.is_buffer(lhs.type) {
 			buffer := lhs.type.variant.(^types.Buffer)
 			elem   := cg_type(ctx, buffer.elem, { .Explicit_Layout, })
-			id     := spv.OpAccessChain(builder, cg_type_ptr(ctx, elem, .Storage_Buffer), lhs.id, cg_constant(ctx, i64(0), nil).id, rhs.id)
+			lhs    := cg_deref(ctx, builder ,lhs)
+
+			if buffer.physical {
+				ctx.capabilities[.VariablePointers] = {}
+				id := spv.OpPtrAccessChain(
+					builder,
+					cg_type_ptr(ctx, elem, .Physical_Storage_Buffer),
+					lhs,
+					rhs.id,
+				)
+				return {
+					id              = id,
+					storage_class   = .Physical_Storage_Buffer,
+					type            = buffer.elem,
+					explicit_layout = true,
+				}
+			}
+			id := spv.OpAccessChain(builder, cg_type_ptr(ctx, elem, .Storage_Buffer), lhs, cg_constant(ctx, i64(0), nil).id, rhs.id)
 			return {
 				id              = id,
 				storage_class   = .Storage_Buffer,

@@ -42,6 +42,7 @@ Vector :: struct {
 Buffer :: struct {
 	using base: Type,
 	elem:       ^Type,
+	physical:   bool,
 }
 
 Matrix :: struct {
@@ -600,6 +601,7 @@ type_hash :: proc(type: ^Type, seed: u64 = 0xcbf29ce484222325) -> u64 {
 			h = hash.fnv64a(to_bytes(&val.value), h)
 		}
 	case ^Buffer:
+		h = hash.fnv64a(to_bytes(&v.physical), h)
 		h = type_hash(v.elem, h)
 	case ^Bit_Set:
 		h = type_hash(v.enum_type, h)
@@ -706,12 +708,15 @@ vector_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Vector
 }
 
 @(require_results)
-buffer_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Buffer {
+buffer_new :: proc(elem: ^Type, physical: bool, allocator: mem.Allocator) -> ^Buffer {
 	assert(elem      != nil)
 	assert(elem.size != 0)
 
 	type := new(.Buffer, Buffer, allocator)
-	type.elem  = elem
+	type.elem     = elem
+	type.size     = 8
+	type.align    = 8
+	type.physical = physical
 
 	return type
 }

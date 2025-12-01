@@ -12,6 +12,8 @@ import "../tokenizer"
 import "../types"
 import spv "../spirv-odin"
 
+import vk "vendor:vulkan"
+
 Checker :: struct {
 	scope:           ^Scope,
 	allocator:       runtime.Allocator,
@@ -20,6 +22,11 @@ Checker :: struct {
 	shader_stage:    ast.Shader_Stage,
 	shared_types:    map[string]^types.Type,
 	config_vars:     map[string]types.Const_Value,
+}
+
+Buffer_Address :: struct($T: typeid) #raw_union {
+	address: vk.DeviceAddress,
+	_:       ^T `hephaistos:"buffer_device_address"`,
 }
 
 Addressing_Mode :: enum {
@@ -1157,6 +1164,24 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 	case reflect.Type_Info_Parameters:
 		panic("???")
 	case reflect.Type_Info_Struct:
+		if .raw_union in v.flags {
+			if v.field_count != 2 {
+				panic("structs with the #raw_union can not be shared")
+			}
+			if ti.size != 8 {
+				panic("structs with the #raw_union can not be shared")
+			}
+			tag, ok := reflect.struct_tag_lookup(auto_cast v.tags[1], "hephaistos")
+			if !ok {
+				panic("structs with the #raw_union can not be shared")
+			}
+			if tag != "buffer_device_address" {
+				panic("structs with the #raw_union can not be shared")
+			}
+			ptr  := v.types[1].variant.(reflect.Type_Info_Pointer)
+			elem := type_info_to_type(ptr.elem, allocator)
+			return types.buffer_new(elem, true, allocator)
+		}
 		fields := make([]types.Field, v.field_count, allocator)
 		for &f, i in fields {
 			f.name.text = v.names[i]
@@ -1306,8 +1331,6 @@ evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: types.Const_Value,
 				return nil
 			}
 			return l %% r
-		case .Exponent:
-			unimplemented()
 		case .Less:
 			return l < r
 		case .Greater:
@@ -1345,8 +1368,6 @@ evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: types.Const_Value,
 			return l * r
 		case .Divide:
 			return l / r
-		case .Exponent:
-			unimplemented()
 		case .Less:
 			return l < r
 		case .Greater:
@@ -2491,7 +2512,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				error(checker, v.elem, "buffer element type must have a non-zero size, got %v", elem)
 				return
 			}
-			operand.type = types.buffer_new(elem, checker.allocator)
+			operand.type = types.buffer_new(elem, v.physical, checker.allocator)
 			operand.mode = .Type
 		} else {
 			count := check_expr(checker, v.count)

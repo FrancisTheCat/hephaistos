@@ -23,6 +23,7 @@ parse              :: parser.parse
 
 check              :: checker.check
 Checker            :: checker.Checker
+Buffer_Address     :: checker.Buffer_Address
 
 Const_Value        :: types.Const_Value
 Type               :: types.Type

@@ -197,6 +197,7 @@ Type_Array :: struct {
 	using node: Expr,
 	count:     ^Expr,
 	elem:      ^Expr,
+	physical:   bool,
 }
 
 Type_Matrix :: struct {

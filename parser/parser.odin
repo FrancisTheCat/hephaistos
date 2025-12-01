@@ -335,15 +335,20 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 	case .Open_Bracket:
 		token_expect(parser, .Open_Bracket) or_return
 		count: ^ast.Expr
-		if token_peek(parser).kind != .Close_Bracket {
+		physical: bool
+		if token_peek(parser).kind == .Pointer {
+			physical = true
+			token_advance(parser)
+		} else if token_peek(parser).kind != .Close_Bracket {
 			count = parse_expr(parser) or_return
 		}
 		token_expect(parser, .Close_Bracket) or_return
 		elem := parse_expr(parser, allow_compound_literals = false) or_return
 
 		a := ast.new(ast.Type_Array, token.location, parser.end_location, parser.allocator)
-		a.count = count
-		a.elem = elem
+		a.count    = count
+		a.elem     = elem
+		a.physical = physical
 
 		if allow_compound_literals && token_peek(parser).kind == .Open_Brace {
 			token_advance(parser)
@@ -458,8 +463,6 @@ binding_powers: #sparse [tokenizer.Token_Kind]int = #partial {
 	.Shift_Right    = 6,
 	.Modulo         = 6,
 	.Modulo_Floored = 6,
-
-	.Exponent       = 7,
 }
 
 parse_expr :: proc(parser: ^Parser, min_power := 0, allow_compound_literals := true) -> (expr: ^ast.Expr, ok: bool) {
