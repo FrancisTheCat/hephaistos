@@ -1,6 +1,6 @@
-@(binding = 0)
+@(uniform, binding = 0)
 input:  image[2][4]f32
-@(binding = 1)
+@(uniform, binding = 1)
 output: image[2][4]f32
 
 @(push_constant)

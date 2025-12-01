@@ -259,6 +259,7 @@ cg_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl, global: b
 					annotate          := annotate
 
 					if types.is_sampler(type) || types.is_image(type) {
+						assert(len(v.types) == 1)
 						assert(global)
 						storage_class     = .Uniform_Constant
 						spv_storage_class = .UniformConstant

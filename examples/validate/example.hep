@@ -36,7 +36,7 @@ vertex_main :: proc(
 	return
 }
 
-@(binding = Binding_Location.Image)
+@(uniform, binding = Binding_Location.Image)
 img: image[2][2]f32
 
 @(storage_buffer, binding = Binding_Location.Some_Buffer)
@@ -57,9 +57,9 @@ when SHADOW_PASS {
 		
 	}
 } else {
-	@(binding = Binding_Location.Texture)
+	@(uniform, binding = Binding_Location.Texture)
 	texture:       sampler[2][3]f32
-	@(binding = Binding_Location.Depth_Texture)
+	@(uniform, binding = Binding_Location.Depth_Texture)
 	depth_texture: sampler[2]f32
 
 	shadow_sample_bilinear :: proc(tex: sampler[2]f32, coords: [2]f32, current_depth, bias: f32) -> f32 {

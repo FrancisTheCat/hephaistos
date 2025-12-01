@@ -1,9 +1,9 @@
 Binding  :: #import(Binding_Point)
 Location :: #import(Uniform_Location)
 
-@(binding = Binding.Input_Image)
+@(uniform, binding = Binding.Input_Image)
 input:  image[2][4]f32
-@(binding = Binding.Output_Image)
+@(uniform, binding = Binding.Output_Image)
 output: image[2][4]f32
 
 @(uniform_buffer, binding = Binding.Uniform_Buffer)

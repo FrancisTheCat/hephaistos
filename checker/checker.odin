@@ -606,6 +606,55 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 		return
 	}
 
+	location_required := false
+	binding_required  := false
+
+	switch decl.interface {
+	case .Uniform:
+		location_required = true
+	case .Uniform_Buffer:
+		binding_required = true
+	case .Storage_Buffer:
+		binding_required = true
+	case .Push_Constant:
+	case .None:
+		unreachable()
+	}
+
+	if types.is_image(type) {
+		if decl.binding == -1 {
+			error(checker, decl.type_expr, "image uniform must have an explicit binding")
+		}
+		location_required = false
+		binding_required  = false
+	}
+
+	if types.is_sampler(type) {
+		if decl.binding == -1 {
+			error(checker, decl.type_expr, "sampler uniform must have an explicit binding")
+		}
+		location_required = false
+		binding_required  = false
+	}
+
+	if binding_required && decl.binding == -1 {
+		error(
+			checker,
+			decl,
+			"variable with '%s' attribute requires an explicit binding to be specified",
+			interface_kind_names[decl.interface],
+		)
+	}
+
+	if location_required && decl.location == -1 {
+		error(
+			checker,
+			decl,
+			"variable with '%s' attribute requires an explicit location to be specified",
+			interface_kind_names[decl.interface],
+		)
+	}
+
 	if decl.interface == .Uniform {
 		if types.is_buffer(type) || types.is_struct(type) {
 			error(checker, decl.type_expr, "type of uniform variable can not be a composite type")
@@ -622,9 +671,6 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 	decl.location = -1
 	decl.binding  = -1
 	seen := make(map[string]struct{}, context.temp_allocator)
-
-	binding_required  := false
-	location_required := false
 
 	@(static, rodata)
 	interface_kind_names := [ast.Interface_Kind]string {
@@ -648,7 +694,6 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 			} else {
 				decl.interface = .Uniform_Buffer
 			}
-			binding_required = true
 			if a.value != nil {
 				error(checker, a.value, "'%s' attribute does not accept a value", a.ident.text)
 			}
@@ -658,7 +703,6 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 			} else {
 				decl.interface = .Uniform
 			}
-			location_required = true
 			if a.value != nil {
 				error(checker, a.value, "'%s' attribute does not accept a value", a.ident.text)
 			}
@@ -668,7 +712,6 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 			} else {
 				decl.interface = .Storage_Buffer
 			}
-			binding_required = true
 			if a.value != nil {
 				error(checker, a.value, "'%s' attribute does not accept a value", a.ident.text)
 			}
@@ -780,25 +823,17 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 		error(checker, decl, "'local_size' attribute can only be applied to compute shaders")
 	}
 
-	if binding_required && decl.binding == -1 {
-		error(
-			checker,
-			decl,
-			"variable with '%s' attribute requires an explicit binding to be specified",
-			interface_kind_names[decl.interface],
-		)
-	}
-
-	if location_required && decl.location == -1 {
-		error(
-			checker,
-			decl,
-			"variable with '%s' attribute requires an explicit location to be specified",
-			interface_kind_names[decl.interface],
-		)
-	}
-
-	if decl.interface != .None {
+	if decl.interface == .None {
+		if decl.location != -1 {
+			error(checker, decl, "attribute 'location' can only be applied to interface variables")
+		}
+		if decl.binding != -1 {
+			error(checker, decl, "attribute 'binding' can only be applied to interface variables")
+		}
+		if decl.descriptor_set != 0 {
+			error(checker, decl, "attribute 'descriptor_set' can only be applied to interface variables")
+		}
+	} else {
 		if len(decl.values) != 0 {
 			error(
 				checker,
