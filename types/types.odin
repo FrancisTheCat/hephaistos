@@ -411,11 +411,11 @@ implicitly_castable :: proc(from, to: ^Type) -> bool {
 	}
 
 	if is_numeric(from) && to.kind == .Vector {
-		return implicitly_castable(from, to.variant.(^Vector).elem)
+		return implicitly_castable(from, vector_elem(to))
 	}
 
 	if is_numeric(from) && to.kind == .Matrix {
-		return implicitly_castable(from, to.variant.(^Matrix).col_type.elem)
+		return implicitly_castable(from, matrix_elem(to))
 	}
 
 	return false
@@ -560,6 +560,11 @@ vector_elem :: proc(type: ^Type) -> ^Type {
 	return type.variant.(^Vector).elem
 }
 
+@(require_results)
+buffer_elem :: proc(type: ^Type) -> ^Type {
+	return type.variant.(^Buffer).elem
+}
+
 @(private="file")
 to_bytes :: proc(v: $P/^$T) -> []byte {
 	return ([^]byte)(v)[:size_of(T)]
@@ -636,7 +641,7 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 			return t_invalid
 		}
 
-		if !equal(v.elem, matrix_elem_type(a)) {
+		if !equal(v.elem, matrix_elem(a)) {
 			return t_invalid
 		}
 
@@ -651,7 +656,7 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 			return t_invalid
 		}
 
-		if !equal(v.elem, matrix_elem_type(b)) {
+		if !equal(v.elem, matrix_elem(b)) {
 			return t_invalid
 		}
 
@@ -659,14 +664,14 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 	}
 
 	if a.kind == .Float {
-		if op_result_type(a, matrix_elem_type(b)) == t_invalid {
+		if op_result_type(a, matrix_elem(b)) == t_invalid {
 			return t_invalid
 		}
 		return b
 	}
 
 	if b.kind == .Float {
-		if op_result_type(b, matrix_elem_type(a)) == t_invalid {
+		if op_result_type(b, matrix_elem(a)) == t_invalid {
 			return t_invalid
 		}
 		return a
@@ -676,8 +681,8 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 }
 
 @(require_results)
-matrix_elem_type :: proc(t: ^Type) -> ^Type {
-	return t.variant.(^Matrix).col_type.elem
+matrix_elem :: proc(type: ^Type) -> ^Type {
+	return type.variant.(^Matrix).col_type.elem
 }
 
 @(require_results)
@@ -833,9 +838,9 @@ operator_applicable :: proc(type: ^Type, op: tokenizer.Token_Kind) -> bool {
 			return true
 		}
 	case .Vector:
-		return operator_applicable(type.variant.(^Vector).elem, op)
+		return operator_applicable(vector_elem(type), op)
 	case .Matrix:
-		return operator_applicable(type.variant.(^Matrix).col_type.elem, op)
+		return operator_applicable(matrix_elem(type), op)
 	}
 
 	return false

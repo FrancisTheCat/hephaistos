@@ -79,7 +79,7 @@ reserve :: proc(hm: ^Hash_Map($K, $V), new_cap: int) {
 
 insert :: proc(hm: ^Hash_Map($K, $V), key: K, value: V) {
 	hash := hash_key(hm^, key)
-	e    := get_entry(hm, key, hash)
+	e    := get_entry(hm^, key, hash)
 
 	if e != nil {
 		e.value = value
@@ -116,8 +116,8 @@ hash_key :: proc(hm: Hash_Map($K, $V), key: K) -> uintptr {
 }
 
 @(require_results)
-get :: proc(hm: ^Hash_Map($K, $V), key: K) -> ^V {
-	e := get_entry(hm, key, hash_key(hm^, key))
+get :: proc(hm: Hash_Map($K, $V), key: K) -> ^V {
+	e := get_entry(hm, key, hash_key(hm, key))
 	if e == nil {
 		return nil
 	} else {
@@ -137,7 +137,7 @@ remove :: proc(hm: ^Hash_Map($K, $V), key: K) -> (V, bool) {
 }
 
 @(require_results)
-get_entry :: proc(hm: ^Hash_Map($K, $V), key: K, hash: uintptr) -> ^Entry(K, V) {
+get_entry :: proc(hm: Hash_Map($K, $V), key: K, hash: uintptr) -> ^Entry(K, V) {
 	mask := uintptr(len(hm.entries) - 1)
 
 	for i in 0 ..< uintptr(len(hm.entries)) {
@@ -199,7 +199,7 @@ main :: proc() {
 	}
 	for i in 0 ..< N {
 		i := K(i)
-		assert(get(&hm, i)^ == i)
+		assert(get(hm, i)^ == i)
 	}
 	fmt.println(time.since(start))
 

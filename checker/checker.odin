@@ -1745,7 +1745,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				case 'a', 'w':
 					index = 3
 				}
-				if index == -1 || index > lhs.type.variant.(^types.Vector).count {
+				if index == -1 || index > types.vector_len(lhs.type) {
 					error(checker, v, "can not swizzle vector of type '%s' with coordinate '%v'", lhs.type, char)
 				}
 				if index != -1 {
@@ -1757,12 +1757,12 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			}
 
 			if len(v.selector.text) == 1 {
-				operand.type = lhs.type.variant.(^types.Vector).elem
+				operand.type = types.vector_elem(lhs.type)
 				operand.mode = lhs.mode
 				return
 			}
 
-			operand.type = types.vector_new(lhs.type.variant.(^types.Vector).elem, len(v.selector.text), checker.allocator)
+			operand.type = types.vector_new(types.vector_elem(lhs.type), len(v.selector.text), checker.allocator)
 			operand.mode = lhs.mode
 			if duplicates {
 				operand.mode = .RValue
@@ -1842,7 +1842,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				v.args[0].value.type = type
 				v.args[1].value.type = type
-				operand.type = type.variant.(^types.Vector).elem
+				operand.type = types.vector_elem(type)
 				operand.mode = .RValue
 			case .Cross:
 				if len(v.args) != 2 {
@@ -1959,7 +1959,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				if !types.matrix_is_square(type) {
 					m   := type.variant.(^types.Matrix)
-					type = types.matrix_new(types.vector_new(types.matrix_elem_type(type), m.cols, checker.allocator), m.col_type.count, checker.allocator)
+					type = types.matrix_new(types.vector_new(types.matrix_elem(type), m.cols, checker.allocator), m.col_type.count, checker.allocator)
 				}
 				operand.type = type
 				operand.mode = .RValue
@@ -1977,7 +1977,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					error(checker, v, "builtin 'determinant' expects a square matrix, got %v", type)
 					break
 				}
-				operand.type = types.matrix_elem_type(type)
+				operand.type = types.matrix_elem(type)
 				operand.mode = .RValue
 			case .Ddx, .Ddy:
 				if checker.shader_stage != .Fragment {
@@ -2027,7 +2027,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				type      := types.op_result_type(x.type, y.type)
 				elem_type := type
 				if types.is_vector(type) {
-					elem_type = type.variant.(^types.Vector).elem
+					elem_type = types.vector_elem(type)
 				}
 				if type.kind == .Invalid || !types.is_float(elem_type) {
 					error(checker, v, "builtin 'tan' expects two float vectors or scalars, got %v and %v", x.type, y.type)
@@ -2043,7 +2043,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					return
 				}
 				x := args[0]
-				if !types.is_vector(x.type) || !types.is_float(x.type.variant.(^types.Vector).elem) {
+				if !types.is_vector(x.type) || !types.is_float(types.vector_elem(x.type)) {
 					error(checker, x, "builtin '%d' expects a vector of floats, got %v", builtin_names[v.builtin], x.type)
 					return
 				}
@@ -2328,17 +2328,17 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			if !types.is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			operand.type = lhs.type.variant.(^types.Matrix).col_type
+			operand.type = types.matrix_elem(lhs.type)
 		case .Vector:
 			if !types.is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			operand.type = lhs.type.variant.(^types.Vector).elem
+			operand.type = types.vector_elem(lhs.type)
 		case .Buffer:
 			if !types.is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			operand.type = lhs.type.variant.(^types.Buffer).elem
+			operand.type = types.buffer_elem(lhs.type)
 		case .Sampler:
 			sampler := lhs.type.variant.(^types.Image)
 			if sampler.dimensions == 1 {
@@ -2352,7 +2352,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					)
 				}
 			} else {
-				if !types.is_vector(rhs.type) || rhs.type.variant.(^types.Vector).count != sampler.dimensions {
+				if !types.is_vector(rhs.type) || types.vector_len(rhs.type) != sampler.dimensions {
 					error(
 						checker,
 						rhs,
@@ -2381,7 +2381,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			} else {
 				if types.is_integer(rhs.type) {
 					v.rhs.type = types.vector_new(types.default_type(rhs.type), image.dimensions, checker.allocator)
-				} else if !types.is_vector(rhs.type) || !types.is_numeric(types.vector_elem(rhs.type)) || rhs.type.variant.(^types.Vector).count != image.dimensions {
+				} else if !types.is_vector(rhs.type) || !types.is_numeric(types.vector_elem(rhs.type)) || types.vector_len(rhs.type) != image.dimensions {
 					error(
 						checker,
 						rhs,
