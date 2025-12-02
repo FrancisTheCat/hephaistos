@@ -2176,8 +2176,11 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 						field_ti  := cg_type(ctx, f.type, { .Explicit_Layout, })
 						val       := spv.OpCompositeExtract(builder, field_ti.type, rhs.id, u32(i))
 						field_ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, field_ti, lhs.storage_class), lhs.id, cg_constant(ctx, i64(i), nil).id)
-						spv.OpStore(builder, field_ptr, val)
-						// append(&members, spv.OpLoad(builder, field_ti.type, field_ptr))
+						if lhs.storage_class == .Physical_Storage_Buffer {
+							spv.OpStore(builder, field_ptr, val, spv.MemoryAccess{ .Aligned, }, u32(f.type.align))
+						} else {
+							spv.OpStore(builder, field_ptr, val)
+						}
 					}
 					continue
 				}
@@ -2190,7 +2193,11 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 					continue
 				}
 				if v.op == nil {
-					spv.OpStore(builder, lhs.id, cg_cast(ctx, builder, rhs, lhs.type))
+					if lhs.storage_class == .Physical_Storage_Buffer {
+						spv.OpStore(builder, lhs.id, cg_cast(ctx, builder, rhs, lhs.type), spv.MemoryAccess{ .Aligned, }, u32(lhs.type.align))
+					} else {
+						spv.OpStore(builder, lhs.id, cg_cast(ctx, builder, rhs, lhs.type))
+					}
 					continue
 				}
 
@@ -2200,11 +2207,15 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 					ctx,
 					builder,
 					v.op,
-					{ id = spv.OpLoad(builder, lhs_ti.type, lhs.id), type = lhs.type, },
+					{ id = cg_deref(ctx, builder, lhs), type = lhs.type, },
 					rhs,
 					&t,
 				)
-				spv.OpStore(builder, lhs.id, value)
+				if lhs.storage_class == .Physical_Storage_Buffer {
+					spv.OpStore(builder, lhs.id, value, spv.MemoryAccess{ .Aligned, }, u32(lhs.type.align))
+				} else {
+					spv.OpStore(builder, lhs.id, value)
+				}
 				lhs_i += 1
 			}
 		}

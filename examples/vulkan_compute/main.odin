@@ -79,8 +79,7 @@ shader_create_hephaistos :: proc(
 		}
 		return
 	}
-	module, ok = shader_create_spirv(ctx, code)
-	return
+	return shader_create_spirv(ctx, code)
 }
 
 debug_callback_proc :: proc "system" (
@@ -632,7 +631,6 @@ buffer_create_with_data :: proc(ctx: Vulkan_Context, data: $S/[]$E) -> (buffer: 
 Compute_Constants :: struct {
 	image_size: [2]i32,
 	tint:       [4]f32,
-	buffer:     hep.Buffer_Address(struct { a, b: f32, }),
 }
 
 @(require_results)
