@@ -1,4 +1,4 @@
-package vk
+package vk_compute
 
 import "base:runtime"
 
