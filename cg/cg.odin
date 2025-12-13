@@ -12,8 +12,9 @@ import "../tokenizer"
 import "../checker"
 import "../hashmap"
 
-import spv      "../spirv-odin"
-import spv_glsl "../spirv-odin/spirv_glsl"
+import spv       "../spirv-odin"
+import spv_glsl  "../spirv-odin/spirv_glsl"
+import spv_debug "../spirv-odin/spirv_debug"
 
 VOID, VOID_PROC: spv.Id
 
@@ -413,7 +414,12 @@ generate :: proc(
 
 	ctx.capabilities[.Shader] = {}
 
-	spv_glsl.extension_id = spv.OpExtInstImport(&ctx.ext_inst, "GLSL.std.450")
+	spv_glsl.extension_id  = spv.OpExtInstImport(&ctx.ext_inst, "GLSL.std.450")
+	spv_debug.extension_id = spv.OpExtInstImport(&ctx.ext_inst, "NonSemantic.Shader.DebugInfo.100")
+	if ctx.spirv_version < spv_version(1, 6) {
+		ctx.extensions["SPV_KHR_non_semantic_info"] = {}
+	}
+
 	spv.OpMemoryModel(&ctx.memory_model, .Logical, .Simple)
 
 	b: spv.Builder = { current_id = &ctx.current_id }
@@ -1789,11 +1795,11 @@ _cg_expr :: proc(
 		if types.is_buffer(lhs.type) {
 			buffer := lhs.type.variant.(^types.Buffer)
 			elem   := cg_type(ctx, buffer.elem, { .Explicit_Layout, })
-			lhs    := cg_deref(ctx, builder ,lhs)
 
 			if buffer.physical {
 				ctx.capabilities[.VariablePointers] = {}
-				id := spv.OpPtrAccessChain(
+				lhs := cg_deref(ctx, builder, lhs)
+				id  := spv.OpPtrAccessChain(
 					builder,
 					cg_type_ptr(ctx, elem, .Physical_Storage_Buffer),
 					lhs,
@@ -1806,7 +1812,7 @@ _cg_expr :: proc(
 					explicit_layout = true,
 				}
 			}
-			id := spv.OpAccessChain(builder, cg_type_ptr(ctx, elem, .Storage_Buffer), lhs, cg_constant(ctx, i64(0), nil).id, rhs.id)
+			id := spv.OpAccessChain(builder, cg_type_ptr(ctx, elem, .Storage_Buffer), lhs.id, cg_constant(ctx, i64(0), nil).id, rhs.id)
 			return {
 				id              = id,
 				storage_class   = .Storage_Buffer,
@@ -2202,8 +2208,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 				}
 
 				t: ^types.Type
-				lhs_ti := cg_type(ctx, v.lhs[lhs_i].type)
-				value  := cg_expr_binary(
+				value := cg_expr_binary(
 					ctx,
 					builder,
 					v.op,

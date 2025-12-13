@@ -7,6 +7,8 @@ import "core:fmt"
 import "core:reflect"
 import "core:terminal/ansi"
 
+_ :: reflect
+
 import "tokenizer"
 import "parser"
 import "ast"
