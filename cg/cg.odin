@@ -12,9 +12,8 @@ import "../tokenizer"
 import "../checker"
 import "../hashmap"
 
-import spv       "../spirv-odin"
-import spv_glsl  "../spirv-odin/spirv_glsl"
-import spv_debug "../spirv-odin/spirv_debug"
+import spv      "../spirv-odin"
+import spv_glsl "../spirv-odin/spirv_glsl"
 
 VOID, VOID_PROC: spv.Id
 
@@ -103,7 +102,7 @@ Context :: struct {
 
 	link_name:          string,
 	shader_stage:       ast.Shader_Stage,
-	debug_file_id:      spv.Id,
+	debug_file:         spv.Id,
 
 	local_size:         [3]i32,
 
@@ -407,15 +406,13 @@ generate :: proc(
 	spv.OpName(&ctx.debug_b, VOID_PROC, "$VOID_PROC")
 
 	if file_name, ok := file_name.?; ok {
-		file := cg_string(&ctx, file_name)
-		spv.OpSource(&ctx.debug_a, .Unknown, 0, file, file_source)
-		ctx.debug_file_id = file
+		ctx.debug_file = cg_string(&ctx, file_name)
+		spv.OpSource(&ctx.debug_a, .Unknown, 0, ctx.debug_file, file_source)
 	}
 
 	ctx.capabilities[.Shader] = {}
 
-	spv_glsl.extension_id  = spv.OpExtInstImport(&ctx.ext_inst, "GLSL.std.450")
-	spv_debug.extension_id = spv.OpExtInstImport(&ctx.ext_inst, "NonSemantic.Shader.DebugInfo.100")
+	spv_glsl.extension_id = spv.OpExtInstImport(&ctx.ext_inst, "GLSL.std.450")
 	if ctx.spirv_version < spv_version(1, 6) {
 		ctx.extensions["SPV_KHR_non_semantic_info"] = {}
 	}
@@ -513,30 +510,18 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 	id: spv.Id
 	switch v in value {
 	case i64:
-		if v == {} {
-			id = cg_nil_value(ctx, ti)
-			break
-		}
 		if types.is_float(type) {
 			id = spv.OpConstant(&ctx.types, ti.type, transmute(u32)f32(v))
 		} else {
 			id = spv.OpConstant(&ctx.types, ti.type, u32(v))
 		}
 	case f64:
-		if v == {} {
-			id = cg_nil_value(ctx, ti)
-			break
-		}
 		if types.is_float(type) {
 			id = spv.OpConstant(&ctx.types, ti.type, transmute(u32)f32(v))
 		} else {
 			id = spv.OpConstant(&ctx.types, ti.type, u32(v))
 		}
 	case bool:
-		if v == {} {
-			id = cg_nil_value(ctx, ti)
-			break
-		}
 		if v {
 			id = spv.OpConstantTrue(&ctx.types, ti.type)
 		} else {
@@ -923,7 +908,6 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 			spv.OpExecutionMode(&ctx.execution_modes, id, .OriginUpperLeft)
 		case .Compute:
 			spv.OpExecutionMode(&ctx.execution_modes, id, .LocalSize, u32(ctx.local_size.x), u32(ctx.local_size.y), u32(ctx.local_size.z))
-			// spv.OpExecutionMode(&ctx.execution_modes, id, .OriginUpperLeft)
 		}
 	}
 }
@@ -1797,7 +1781,7 @@ _cg_expr :: proc(
 			elem   := cg_type(ctx, buffer.elem, { .Explicit_Layout, })
 
 			if buffer.physical {
-				ctx.capabilities[.VariablePointers] = {}
+				ctx.capabilities[.VariablePointersStorageBuffer] = {}
 				lhs := cg_deref(ctx, builder, lhs)
 				id  := spv.OpPtrAccessChain(
 					builder,
@@ -1902,14 +1886,26 @@ cg_lookup_label :: proc(ctx: ^Context, label: string) -> ^Scope {
 	panic("")
 }
 
+stmt_requires_line_info :: proc(stmt: ^ast.Stmt) -> bool {
+	#partial switch v in stmt.derived_stmt {
+	case ^ast.Decl_Value:
+		return v.mutable
+	case ^ast.Stmt_When:
+		return false
+	case ^ast.Stmt_Block:
+		return false
+	}
+	return true
+}
+
 cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global := false) -> (returned: bool) {
 	if stmt == nil {
 		return
 	}
 
-	if ctx.debug_file_id != 0 {
-		if _, is_decl := stmt.derived_stmt.(^ast.Decl_Value); !is_decl {
-			spv.OpLine(builder, ctx.debug_file_id, u32(stmt.start.line), 0)
+	if ctx.debug_file != 0 {
+		if !global && stmt_requires_line_info(stmt) {
+			spv.OpLine(builder, ctx.debug_file, u32(stmt.start.line), 0)
 		}
 	}
 
@@ -2231,9 +2227,6 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		}
 
 	case ^ast.Decl_Value:
-		if v.mutable && ctx.debug_file_id != 0 && !global {
-			spv.OpLine(builder, ctx.debug_file_id, u32(stmt.start.line), 0)
-		}
 		cg_decl(ctx, builder, v, global)
 	}
 
