@@ -1390,6 +1390,31 @@ main :: proc() {
 				{ .COLOR_ATTACHMENT_WRITE, },
 			)
 
+			image_memory_barrier(
+				ctx,
+				command_buffer,
+				swapchain.color_image.image,
+				.UNDEFINED,
+				.COLOR_ATTACHMENT_OPTIMAL,
+				{ .COLOR_ATTACHMENT_OUTPUT, },
+				{ .COLOR_ATTACHMENT_OUTPUT, },
+				{ .COLOR_ATTACHMENT_WRITE, },
+				{ .COLOR_ATTACHMENT_WRITE, },
+			)
+
+			image_memory_barrier(
+				ctx,
+				command_buffer,
+				swapchain.depth_image.image,
+				.UNDEFINED,
+				.DEPTH_ATTACHMENT_OPTIMAL,
+				{ .EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS, },
+				{ .EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS, },
+				{ .DEPTH_STENCIL_ATTACHMENT_WRITE, },
+				{ .DEPTH_STENCIL_ATTACHMENT_WRITE, },
+				aspect = { .DEPTH, },
+			)
+
 			vk.CmdSetViewport(command_buffer, 0, 1, &vk.Viewport{
 				x        = 0,
 				y        = 0,
