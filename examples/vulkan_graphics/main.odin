@@ -29,14 +29,11 @@ Vulkan_Context :: struct {
 	device:            vk.Device,
 	queue:             vk.Queue,
 	command_pool:      vk.CommandPool,
-	descriptor_pool:   vk.DescriptorPool,
 }
 
 Vulkan_Pipeline :: struct {
-	pipeline:              vk.Pipeline,
-	layout:                vk.PipelineLayout,
-	descriptor_set_layout: vk.DescriptorSetLayout,
-	descriptor_sets:       []vk.DescriptorSet,
+	pipeline: vk.Pipeline,
+	layout:   vk.PipelineLayout,
 }
 
 Vulkan_Swapchain :: struct {
@@ -372,14 +369,15 @@ device_create :: proc(physical_device: vk.PhysicalDevice, queue_index: u32) -> (
 			samplerAnisotropy = true,
 		},
 		pNext = &vk.PhysicalDeviceVulkan12Features {
-			sType               = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-			bufferDeviceAddress = true,
-			scalarBlockLayout   = true,
-			pNext               = &vk.PhysicalDeviceVulkan11Features {
+			sType                       = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+			bufferDeviceAddress         = true,
+			scalarBlockLayout           = true,
+			separateDepthStencilLayouts = true,
+			pNext                       = &vk.PhysicalDeviceVulkan11Features {
 				sType                         = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
 				variablePointers              = true,
 				variablePointersStorageBuffer = true,
-				pNext = &vk.PhysicalDeviceVulkan13Features {
+				pNext                         = &vk.PhysicalDeviceVulkan13Features {
 					sType            = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
 					dynamicRendering = true,
 				},
@@ -448,82 +446,14 @@ choose_swapchain_parameters :: proc(ctx: Vulkan_Context, surface: vk.SurfaceKHR)
 	return
 }
 
-@(require_results)
-descriptor_pool_create :: proc(ctx: Vulkan_Context) -> (descriptor_pool: vk.DescriptorPool) {
-	pool_sizes := []vk.DescriptorPoolSize {
-		{ type = .COMBINED_IMAGE_SAMPLER, descriptorCount = MAX_FRAMES_IN_FLIGHT * 2, },
-		{ type = .UNIFORM_BUFFER,         descriptorCount = MAX_FRAMES_IN_FLIGHT * 2, },
-		{ type = .STORAGE_BUFFER,         descriptorCount = MAX_FRAMES_IN_FLIGHT * 2, },
-	}
-	descriptor_pool_create_info := vk.DescriptorPoolCreateInfo {
-		sType         = .DESCRIPTOR_POOL_CREATE_INFO,
-		poolSizeCount = u32(len(pool_sizes)),
-		pPoolSizes    = raw_data(pool_sizes),
-		maxSets       = MAX_FRAMES_IN_FLIGHT * 3,
-	}
-	if result := vk.CreateDescriptorPool(ctx.device, &descriptor_pool_create_info, nil, &descriptor_pool); result != nil {
-		fmt.eprintln("Failed to create descriptor pool:", result)
-		os.exit(1)
-	}
-
-	return
-}
-
-@(require_results)
-descriptor_set_layout_create :: proc(
-	device:   vk.Device,
-	bindings: []vk.DescriptorSetLayoutBinding,
-) -> (descriptor_set_layout: vk.DescriptorSetLayout) {
-	descriptor_layout_create_info := vk.DescriptorSetLayoutCreateInfo {
-		sType        = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-		bindingCount = u32(len(bindings)),
-		pBindings    = raw_data(bindings),
-	}
-
-	if result := vk.CreateDescriptorSetLayout(device, &descriptor_layout_create_info, nil, &descriptor_set_layout); result != nil {
-		fmt.eprintln("Failed to create descriptor set layout:", result)
-		os.exit(1)
-	}
-	return
-}
-
-@(require_results)
-descriptor_sets_create :: proc(
-	device:                vk.Device,
-	descriptor_pool:       vk.DescriptorPool,
-	descriptor_set_layout: vk.DescriptorSetLayout,
-	allocator := context.allocator,
-) -> (descriptor_sets: []vk.DescriptorSet) {
-	descriptor_sets = make([]vk.DescriptorSet,       MAX_FRAMES_IN_FLIGHT,              allocator)
-	layouts        := make([]vk.DescriptorSetLayout, MAX_FRAMES_IN_FLIGHT, context.temp_allocator)
-	for &l in layouts {
-		l = descriptor_set_layout
-	}
-
-	alloc_info := vk.DescriptorSetAllocateInfo {
-		sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
-		descriptorPool     = descriptor_pool,
-		descriptorSetCount = MAX_FRAMES_IN_FLIGHT,
-		pSetLayouts        = raw_data(layouts),
-	}
-	if result := vk.AllocateDescriptorSets(device, &alloc_info, raw_data(descriptor_sets)); result != nil {
-		fmt.eprintln("Failed to allocate descriptor sets:", result)
-		os.exit(1)
-	}
-	return
-}
-
 pipeline_destroy :: proc(ctx: Vulkan_Context, pipeline: Vulkan_Pipeline) {
 	vk.DestroyPipelineLayout(ctx.device, pipeline.layout,   nil)
 	vk.DestroyPipeline      (ctx.device, pipeline.pipeline, nil)
-	vk.DestroyDescriptorSetLayout(ctx.device, pipeline.descriptor_set_layout, nil)
-	delete(pipeline.descriptor_sets)
 }
 
 @(require_results)
 pipeline_create :: proc(
 	ctx:            Vulkan_Context,
-	bindings:       []vk.DescriptorSetLayoutBinding,
 	color_format:   vk.Format,
 	depth_format:   vk.Format,
 	samples:        vk.SampleCountFlag,
@@ -614,11 +544,8 @@ pipeline_create :: proc(
 		blendConstants  = 0,
 	}
 
-	pipeline.descriptor_set_layout = descriptor_set_layout_create(ctx.device, bindings)
 	pipeline_layout_create_info := vk.PipelineLayoutCreateInfo {
 		sType                  = .PIPELINE_LAYOUT_CREATE_INFO,
-		setLayoutCount         = 1,
-		pSetLayouts            = &pipeline.descriptor_set_layout,
 		pushConstantRangeCount = 1,
 		pPushConstantRanges    = &vk.PushConstantRange {
 			stageFlags = { .VERTEX, },
@@ -672,8 +599,6 @@ pipeline_create :: proc(
 		fmt.eprintln("Failed to create graphics pipeline:", result)
 		os.exit(1)
 	}
-
-	pipeline.descriptor_sets = descriptor_sets_create(ctx.device, ctx.descriptor_pool, pipeline.descriptor_set_layout)
 
 	return
 }
@@ -1065,10 +990,14 @@ vulkan_allocate :: proc(
 		sType           = .MEMORY_ALLOCATE_INFO,
 		allocationSize  = size,
 		memoryTypeIndex = find_memory_type(ctx.physical_device, memory_type_bits, properties) or_else panic("Failed to find memory type"),
-		pNext           = &vk.MemoryAllocateFlagsInfo {
-			sType = .MEMORY_ALLOCATE_FLAGS_INFO,
-			flags = { .DEVICE_ADDRESS, },
-		} if shader_addressable else nil,
+		pNext           = &vk.MemoryPriorityAllocateInfoEXT {
+			sType    = .MEMORY_PRIORITY_ALLOCATE_INFO_EXT,
+			priority = 1,
+			pNext    = &vk.MemoryAllocateFlagsInfo {
+				sType = .MEMORY_ALLOCATE_FLAGS_INFO,
+				flags = { .DEVICE_ADDRESS, },
+			} if shader_addressable else nil,
+		},
 	}
 
 	if result := vk.AllocateMemory(ctx.device, &alloc_info, nil, &allocation.memory); result != nil {
@@ -1207,9 +1136,6 @@ main :: proc() {
 	ctx.command_pool = create_command_pool(ctx.device, queue_index)
 	defer vk.DestroyCommandPool(ctx.device, ctx.command_pool, nil)
 
-	ctx.descriptor_pool = descriptor_pool_create(ctx)
-	defer vk.DestroyDescriptorPool(ctx.device, ctx.descriptor_pool, nil)
-	
 	present_mode, min_image_count, surface_format := choose_swapchain_parameters(ctx, surface)
 
 	counts := ctx.device_properties.limits.framebufferColorSampleCounts & ctx.device_properties.limits.framebufferDepthSampleCounts
@@ -1221,7 +1147,7 @@ main :: proc() {
 
 	depth_format := choose_image_format(
 		ctx,
-		{ .D32_SFLOAT, .D24_UNORM_S8_UINT, .X8_D24_UNORM_PACK32, .D32_SFLOAT_S8_UINT, },
+		{ .D24_UNORM_S8_UINT, .X8_D24_UNORM_PACK32, .D16_UNORM, .D32_SFLOAT_S8_UINT, .D32_SFLOAT, },
 		.OPTIMAL,
 		{ .DEPTH_STENCIL_ATTACHMENT, },
 	) or_else panic("Failed to find suitable image format for depth buffer")
@@ -1233,26 +1159,6 @@ main :: proc() {
 	
 	pipeline := pipeline_create(
 		ctx,
-		{
-			{
-				binding         = 0,
-				descriptorCount = 1,
-				descriptorType  = .UNIFORM_BUFFER,
-				stageFlags      = { .FRAGMENT, .VERTEX, },
-			},
-			{
-				binding         = 1,
-				descriptorCount = 1,
-				descriptorType  = .COMBINED_IMAGE_SAMPLER,
-				stageFlags      = { .FRAGMENT, },
-			},
-			{
-				binding         = 2,
-				descriptorCount = 1,
-				descriptorType  = .COMBINED_IMAGE_SAMPLER,
-				stageFlags      = { .FRAGMENT, },
-			},
-		},
 		surface_format.format,
 		depth_format,
 		max_sample_count,
@@ -1291,10 +1197,6 @@ main :: proc() {
 		vk.DestroySemaphore(ctx.device, image_available_semaphores[i], nil)
 		vk.DestroyFence    (ctx.device, in_flight_fences[i],           nil)
 	}
-
-	compute_command_buffers, compute_command_buffers_ok := allocate_command_buffers(ctx.device, ctx.command_pool, MAX_FRAMES_IN_FLIGHT)
-	defer delete(compute_command_buffers)
-	assert(compute_command_buffers_ok)
 
 	glfw.SetFramebufferSizeCallback(window.handle, glfw_resize_callback)
 	glfw_resize_callback :: proc "c" (window_handle: glfw.WindowHandle, width, height: i32) {
@@ -1436,7 +1338,7 @@ main :: proc() {
 				return
 			}
 
-			clear_color := la.vector4_srgb_to_linear_f32(color_from_hex_rgba(0x1E2128FF))
+			clear_color := la.vector4_srgb_to_linear_f32(color_from_hex_rgba(0))
 			color_attachment := vk.RenderingAttachmentInfo {
 				sType              = .RENDERING_ATTACHMENT_INFO,
 				imageView          = swapchain.color_view,
@@ -1470,8 +1372,6 @@ main :: proc() {
 			})
 
 			vk.CmdBindPipeline(command_buffer, .GRAPHICS, pipeline.pipeline)
-
-			vk.CmdBindDescriptorSets(command_buffer, .GRAPHICS, pipeline.layout, 0, 1, &pipeline.descriptor_sets[current_frame], 0, nil)
 
 			push_constants := Push_Constants {
 				view          = glm.mat4LookAt({}, {0, 0, 1}, {0, -1, 0}),
