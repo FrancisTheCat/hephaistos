@@ -1663,6 +1663,10 @@ _cg_expr :: proc(
 					lod = cg_expr(ctx, builder, v.args[1].value).id
 				}
 				return { id = spv.OpImageQuerySizeLod(builder, cg_type(ctx, v.type).type, image, lod), }
+			case .Bit_Count:
+				return { id = spv.OpBitCount(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Bit_Reverse:
+				return { id = spv.OpBitReverse(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			}
 		case v.is_cast:
 			return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type), }

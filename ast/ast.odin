@@ -136,6 +136,8 @@ Builtin_Id :: enum {
 	Distance,
 	Inverse_Sqrt,
 	Abs,
+	Bit_Count,
+	Bit_Reverse,
 
 	Texture_Size,
 	Image_Size,

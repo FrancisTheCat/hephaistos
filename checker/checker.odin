@@ -84,6 +84,8 @@ builtin_names: [ast.Builtin_Id]string = {
 	.Distance     = "distance",
 	.Inverse_Sqrt = "inverse_sqrt",
 	.Abs          = "abs",
+	.Bit_Count    = "bit_count",
+	.Bit_Reverse  = "bit_reverse",
 
 	.Texture_Size = "texture_size",
 	.Image_Size   = "image_size",
@@ -2125,6 +2127,22 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				sampler     := args[0].type.variant.(^types.Image)
 				operand.type = types.vector_new(types.t_i32, sampler.dimensions, checker.allocator)
+				operand.mode = .RValue
+			case .Bit_Count, .Bit_Reverse:
+				if len(v.args) != 1 {
+					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(v.args))
+					return
+				}
+				type := args[0].type
+				if types.is_vector(type) {
+					type = types.vector_elem(type)
+				}
+				type = types.default_type(type)
+				if !types.is_integer(type) {
+					error(checker, v, "builtin '%s' expects an integer scalar or vector, got %v", builtin_names[v.builtin], v.args[0].type)
+					return
+				}
+				operand.type = args[0].type
 				operand.mode = .RValue
 			}
 			
