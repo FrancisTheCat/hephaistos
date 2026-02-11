@@ -22,6 +22,7 @@ Checker :: struct {
 	shader_stage:    ast.Shader_Stage,
 	shared_types:    map[string]^types.Type,
 	config_vars:     map[string]types.Const_Value,
+	target_opengl:   bool,
 
 	reflection:      struct {
 		enabled: bool,
@@ -641,20 +642,22 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 		unreachable()
 	}
 
-	if types.is_image(type) {
-		if decl.binding == -1 {
-			error(checker, decl.type_expr, "image uniform must have an explicit binding")
+	if !checker.target_opengl {
+		if types.is_image(type) {
+			if decl.binding == -1 {
+				error(checker, decl.type_expr, "image uniform must have an explicit binding")
+			}
+			location_required = false
+			binding_required  = false
 		}
-		location_required = false
-		binding_required  = false
-	}
 
-	if types.is_sampler(type) {
-		if decl.binding == -1 {
-			error(checker, decl.type_expr, "sampler uniform must have an explicit binding")
+		if types.is_sampler(type) {
+			if decl.binding == -1 {
+				error(checker, decl.type_expr, "sampler uniform must have an explicit binding")
+			}
+			location_required = false
+			binding_required  = false
 		}
-		location_required = false
-		binding_required  = false
 	}
 
 	if binding_required && decl.binding == -1 {
@@ -1058,16 +1061,18 @@ check_stmt_list :: proc(checker: ^Checker, stmts: []^ast.Stmt, ignore_constants 
 
 @(private = "file")
 checker_init :: proc(
-	checker:      ^Checker,
-	defines:      map[string]types.Const_Value,
-	shared_types: []Shared_Type,
-	reflection:   bool,
+	checker:       ^Checker,
+	defines:       map[string]types.Const_Value,
+	shared_types:  []Shared_Type,
+	reflection:    bool,
+	target_opengl: bool,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) {
 	checker.allocator                 = allocator
 	checker.reflection.data.allocator = allocator
 	checker.reflection.enabled        = reflection
+	checker.target_opengl             = target_opengl
 	checker.error_allocator           = error_allocator
 	checker.errors                    = make([dynamic]tokenizer.Error, error_allocator)
 
@@ -1279,11 +1284,12 @@ check :: proc(
 	defines: map[string]types.Const_Value,
 	types:   []typeid,
 	reflection      := false, // when true, checker.reflection.infos will contain information about used interface variables
+	target_opengl   := false,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (checker: Checker, errors: []tokenizer.Error) {
 	shared_types := shared_types_from_typeids(types, allocator)
-	checker_init(&checker, defines, shared_types, reflection, allocator, error_allocator)
+	checker_init(&checker, defines, shared_types, reflection, target_opengl, allocator, error_allocator)
 	check_stmt_list(&checker, stmts)
 	return checker, checker.errors[:]
 }

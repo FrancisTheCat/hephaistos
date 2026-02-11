@@ -35,4 +35,5 @@ _interface_infos_init :: proc "contextless" () {
 	interface_infos[.FragCoord         ] = { type = vec4,        usage = #partial { .Fragment = .In,  }, }
 	interface_infos[.FragDepth         ] = { type = types.t_f32, usage = #partial { .Fragment = .In,  }, }
 	interface_infos[.GlobalInvocationId] = { type = ivec3,       usage = #partial { .Compute  = .In,  }, }
+	interface_infos[.NumWorkgroups     ] = { type = ivec3,       usage = #partial { .Compute  = .In,  }, }
 }

@@ -1475,8 +1475,7 @@ _cg_expr :: proc(
 		}
 
 	case ^ast.Expr_Call:
-		switch {
-		case v.builtin != nil:
+		if v.builtin != nil {
 			ti := cg_type(ctx, v.type)
 			switch v.builtin {
 			case .Invalid, .Size_Of, .Align_Of, .Type_Of:
@@ -1668,9 +1667,14 @@ _cg_expr :: proc(
 			case .Bit_Reverse:
 				return { id = spv.OpBitReverse(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			}
-		case v.is_cast:
+
+			unreachable()
+		}
+
+		if v.is_cast {
 			return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type), }
 		}
+
 		fn        := cg_expr(ctx, builder, v.lhs)
 		args      := make([]spv.Id, len(v.args))
 		proc_type := v.lhs.type.variant.(^types.Proc)
@@ -1678,7 +1682,7 @@ _cg_expr :: proc(
 			arg = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[i].value), proc_type.args[i].type)
 		}
 
-		return_type_info := cg_type(ctx, expr.type)
+		return_type_info := cg_type(ctx, proc_type.return_type)
 		ret              := spv.OpFunctionCall(builder, return_type_info.type, fn.id, ..args)
 
 		if len(proc_type.returns) == 1 {
