@@ -22,6 +22,17 @@ Checker :: struct {
 	shader_stage:    ast.Shader_Stage,
 	shared_types:    map[string]^types.Type,
 	config_vars:     map[string]types.Const_Value,
+
+	reflection:      struct {
+		enabled: bool,
+		data:    map[string]Reflection_Info,
+	},
+}
+
+Reflection_Info :: struct {
+	type:              ^types.Type,
+	interface:         ast.Interface_Kind,
+	binding, location: int,
 }
 
 Buffer_Address :: struct($T: typeid) #raw_union {
@@ -674,6 +685,20 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 	if !(types.is_buffer(type) || types.is_struct(type)) {
 		error(checker, decl.type_expr, "type of %s variable has to be a composite type", interface_kind_names[decl.interface])
 	}
+
+	if !checker.reflection.enabled {
+		return
+	}
+	
+	for lhs in decl.lhs {
+		ident := lhs.derived_expr.(^ast.Expr_Ident).ident.text
+		checker.reflection.data[ident] = {
+			type      = type,
+			interface = decl.interface,
+			binding   = decl.binding,
+			location  = decl.location,
+		}
+	}
 }
 
 check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant: bool) {
@@ -1037,12 +1062,15 @@ checker_init :: proc(
 	checker:      ^Checker,
 	defines:      map[string]types.Const_Value,
 	shared_types: []Shared_Type,
+	reflection:   bool,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) {
-	checker.allocator       = allocator
-	checker.error_allocator = error_allocator
-	checker.errors          = make([dynamic]tokenizer.Error, error_allocator)
+	checker.allocator                 = allocator
+	checker.reflection.data.allocator = allocator
+	checker.reflection.enabled        = reflection
+	checker.error_allocator           = error_allocator
+	checker.errors                    = make([dynamic]tokenizer.Error, error_allocator)
 
 	scope_push(checker, .Global)
 
@@ -1251,11 +1279,12 @@ check :: proc(
 	stmts:   []^ast.Stmt,
 	defines: map[string]types.Const_Value,
 	types:   []typeid,
+	reflection      := false, // when true, checker.reflection.infos will contain information about used interface variables
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (checker: Checker, errors: []tokenizer.Error) {
 	shared_types := shared_types_from_typeids(types, allocator)
-	checker_init(&checker, defines, shared_types, allocator, error_allocator)
+	checker_init(&checker, defines, shared_types, reflection, allocator, error_allocator)
 	check_stmt_list(&checker, stmts)
 	return checker, checker.errors[:]
 }

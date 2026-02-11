@@ -26,6 +26,7 @@ parse              :: parser.parse
 check              :: checker.check
 Checker            :: checker.Checker
 Buffer_Address     :: checker.Buffer_Address
+Reflection_Info    :: checker.Reflection_Info
 
 Const_Value        :: types.Const_Value
 Type               :: types.Type
@@ -116,7 +117,7 @@ compile_shader :: proc(
 	}
 
 	checker: Checker
-	checker, errors = check(stmts, defines, shared_types, context.temp_allocator, error_allocator)
+	checker, errors = check(stmts, defines, shared_types, false, context.temp_allocator, error_allocator)
 	if len(errors) != 0 {
 		return
 	}
