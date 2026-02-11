@@ -1946,14 +1946,18 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 					error(checker, v, "builtin '%s' expects two vectors or scalars of the same type, got %v", builtin_names[v.builtin], type)
 					break
 				}
-				if !types.is_float(t) {
+				t_valid := types.is_float(t)
+				if types.is_vector(t) && types.is_vector(type) {
+					t_valid = types.op_result_type(t, type).kind != .Invalid
+				}
+				if !t_valid {
 					error(checker, v, "builtin '%s' expects a float for the interpolation value, got %v", builtin_names[v.builtin], t)
 					break
 				}
 				for arg in v.args[:2] {
 					arg.value.type = type
 				}
-				v.args[2].value.type = types.default_type(t)
+				v.args[2].value.type = types.default_type(type)
 				operand.type         = type
 				operand.mode         = .RValue
 			case .Inverse:
