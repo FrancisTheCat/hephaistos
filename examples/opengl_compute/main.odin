@@ -3,7 +3,7 @@ package gl_compute
 import "base:runtime"
 
 import "core:fmt"
-import os "core:os/os2"
+import "core:os"
 import "core:slice"
 import "core:strings"
 

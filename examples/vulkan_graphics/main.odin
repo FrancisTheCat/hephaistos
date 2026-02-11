@@ -5,7 +5,7 @@ package vk_graphics
 import "base:runtime"
 
 import "core:fmt"
-import os "core:os/os2"
+import "core:os"
 @(require)
 import "core:mem"
 import "core:time"

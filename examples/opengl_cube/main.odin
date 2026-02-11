@@ -1,7 +1,7 @@
 package gl_cube
 
 import glm "core:math/linalg/glsl"
-import os "core:os/os2"
+import "core:os"
 import "core:strings"
 import "core:time"
 
@@ -152,7 +152,7 @@ main :: proc() {
 
 	    // Back face
 	    20, 21, 22,
-	    20, 22, 23
+	    20, 22, 23,
 	}
 
 	vbo, ibo: u32

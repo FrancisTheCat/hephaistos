@@ -100,12 +100,12 @@ main :: proc() {
 	if len(errors) != 0 {
 		lines := strings.split_lines(source, context.temp_allocator)
 		for error in errors {
-			hep.print_error(os.stream_from_handle(os.stderr), FILE_NAME, lines, error)
+			hep.print_error(os.to_stream(os.stderr), FILE_NAME, lines, error)
 		}
 		return
 	}
 
-	os.write_entire_file("a.spv", slice.to_bytes(code))
+	_ = os.write_entire_file("a.spv", slice.to_bytes(code))
 
 	ctx := spv_tools.context_create(.Vulkan_1_4)
 	defer spv_tools.context_destroy(ctx)
@@ -141,5 +141,5 @@ main :: proc() {
 	result := spv_tools.optimizer_run(optimizer, raw_data(code), len(code), &binary, options)
 	assert(result == .Success)
 
-	os.write_entire_file("opt.spv", slice.to_bytes(binary^))
+	_ = os.write_entire_file("opt.spv", slice.to_bytes(binary^))
 }
