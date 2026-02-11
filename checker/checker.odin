@@ -679,11 +679,10 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 		if types.is_buffer(type) || types.is_struct(type) {
 			error(checker, decl.type_expr, "type of uniform variable can not be a composite type")
 		}
-		return
-	}
-
-	if !(types.is_buffer(type) || types.is_struct(type)) {
-		error(checker, decl.type_expr, "type of %s variable has to be a composite type", interface_kind_names[decl.interface])
+	} else {
+		if !(types.is_buffer(type) || types.is_struct(type)) {
+			error(checker, decl.type_expr, "type of %s variable has to be a composite type", interface_kind_names[decl.interface])
+		}
 	}
 
 	if !checker.reflection.enabled {
