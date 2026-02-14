@@ -12,6 +12,7 @@ import "../tokenizer"
 import "../types"
 import spv "../spirv-odin"
 
+@(require)
 import vk "vendor:vulkan"
 
 Checker :: struct {
