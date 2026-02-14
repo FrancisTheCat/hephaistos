@@ -25,9 +25,16 @@ Checker :: struct {
 	target_opengl:   bool,
 
 	reflection:      struct {
-		enabled: bool,
-		data:    map[string]Reflection_Info,
+		enabled:      bool,
+		interface:    map[string]Reflection_Info,
+		entry_points: map[string]Entry_Point_Info,
 	},
+}
+
+Entry_Point_Info :: struct {
+	inputs:  []Reflection_Info,
+	outputs: []Reflection_Info,
+	stage:   ast.Shader_Stage,
 }
 
 Reflection_Info :: struct {
@@ -694,7 +701,7 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 	
 	for lhs in decl.lhs {
 		ident := lhs.derived_expr.(^ast.Expr_Ident).ident.text
-		checker.reflection.data[ident] = {
+		checker.reflection.interface[ident] = {
 			type      = type,
 			interface = decl.interface,
 			binding   = decl.binding,
@@ -841,7 +848,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 						error(checker, a.ident, "procedures can only be annotated with one shader stage")
 					}
 					decl.shader_stage = stage
-					found          = true
+					found             = true
 					break
 				}
 			}
@@ -1029,6 +1036,32 @@ resolve_constant :: proc(checker: ^Checker, e: ^Entity) {
 		}
 	}
 
+	if checker.reflection.enabled && d.shader_stage != nil {
+		type    := type.variant.(^types.Proc)
+		inputs  := make([]Reflection_Info, len(type.args),    checker.allocator)
+		outputs := make([]Reflection_Info, len(type.returns), checker.allocator)
+
+		for input, i in type.args {
+			inputs[i] = {
+				type     = input.type,
+				location = input.location,
+			}
+		}
+
+		for output, i in type.returns {
+			outputs[i] = {
+				type     = output.type,
+				location = output.location,
+			}
+		}
+
+		checker.reflection.entry_points[e.ident.text] = {
+			inputs  = inputs,
+			outputs = outputs,
+			stage   = d.shader_stage,
+		}
+	}
+
 	d.types[value_index]       = type
 	d.values[value_index].type = type
 
@@ -1069,12 +1102,13 @@ checker_init :: proc(
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) {
-	checker.allocator                 = allocator
-	checker.reflection.data.allocator = allocator
-	checker.reflection.enabled        = reflection
-	checker.target_opengl             = target_opengl
-	checker.error_allocator           = error_allocator
-	checker.errors                    = make([dynamic]tokenizer.Error, error_allocator)
+	checker.allocator                         = allocator
+	checker.reflection.interface.allocator    = allocator
+	checker.reflection.entry_points.allocator = allocator
+	checker.reflection.enabled                = reflection
+	checker.target_opengl                     = target_opengl
+	checker.error_allocator                   = error_allocator
+	checker.errors                            = make([dynamic]tokenizer.Error, error_allocator)
 
 	scope_push(checker, .Global)
 
