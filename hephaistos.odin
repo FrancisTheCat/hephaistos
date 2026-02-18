@@ -118,7 +118,7 @@ compile_shader :: proc(
 	}
 
 	checker: Checker
-	checker, errors = check(stmts, defines, shared_types, false, false, context.temp_allocator, error_allocator)
+	checker, errors = check(stmts, defines, shared_types, {}, context.temp_allocator, error_allocator)
 	if len(errors) != 0 {
 		return
 	}

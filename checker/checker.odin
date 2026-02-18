@@ -15,18 +15,29 @@ import spv "../spirv-odin"
 @(require)
 import vk "vendor:vulkan"
 
-Checker :: struct {
-	scope:           ^Scope,
-	allocator:       runtime.Allocator,
-	errors:          [dynamic]tokenizer.Error,
-	error_allocator: runtime.Allocator,
-	shader_stage:    ast.Shader_Stage,
-	shared_types:    map[string]^types.Type,
-	config_vars:     map[string]types.Const_Value,
-	target_opengl:   bool,
+Flag :: enum {
+	Auto_Map_Locations,
+	Auto_Bind_Uniforms,
+	Enable_Reflection,
+}
 
-	reflection:      struct {
-		enabled:      bool,
+Flags :: bit_set[Flag]
+
+Checker :: struct {
+	allocator:        runtime.Allocator,
+	errors:           [dynamic]tokenizer.Error,
+	error_allocator:  runtime.Allocator,
+
+	shared_types:     map[string]^types.Type,
+	config_vars:      map[string]types.Const_Value,
+	flags:            Flags,
+
+	scope:            ^Scope,
+	shader_stage:     ast.Shader_Stage,
+	current_location: int,
+	current_binding:  int,
+
+	reflection:       struct {
 		interface:    map[string]Reflection_Info,
 		entry_points: map[string]Entry_Point_Info,
 	},
@@ -630,7 +641,7 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 		.Push_Constant  = "push constant",
 		.Storage_Buffer = "storage buffer",
 	}
-	
+
 	if decl.interface == .None || type == nil || type.kind == .Invalid {
 		return
 	}
@@ -641,6 +652,11 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 	switch decl.interface {
 	case .Uniform:
 		location_required = true
+
+		if decl.binding != -1 {
+			location_required = false
+			binding_required  = true
+		}
 	case .Uniform_Buffer:
 		binding_required = true
 	case .Storage_Buffer:
@@ -650,40 +666,32 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 		unreachable()
 	}
 
-	if !checker.target_opengl {
-		if types.is_image(type) {
-			if decl.binding == -1 {
-				error(checker, decl.type_expr, "image uniform must have an explicit binding")
-			}
-			location_required = false
-			binding_required  = false
-		}
-
-		if types.is_sampler(type) {
-			if decl.binding == -1 {
-				error(checker, decl.type_expr, "sampler uniform must have an explicit binding")
-			}
-			location_required = false
-			binding_required  = false
-		}
-	}
-
 	if binding_required && decl.binding == -1 {
-		error(
-			checker,
-			decl,
-			"variable with '%s' attribute requires an explicit binding to be specified",
-			interface_kind_names[decl.interface],
-		)
+		if .Auto_Bind_Uniforms in checker.flags {
+			decl.binding             = checker.current_binding
+			checker.current_binding += 1
+		} else {
+			error(
+				checker,
+				decl,
+				"variable with '%s' attribute requires an explicit binding to be specified",
+				interface_kind_names[decl.interface],
+			)
+		}
 	}
 
 	if location_required && decl.location == -1 {
-		error(
-			checker,
-			decl,
-			"variable with '%s' attribute requires an explicit location to be specified",
-			interface_kind_names[decl.interface],
-		)
+		if .Auto_Map_Locations in checker.flags {
+			decl.location             = checker.current_location
+			checker.current_location += 1
+		} else {
+			error(
+				checker,
+				decl,
+				"variable with '%s' attribute requires an explicit location to be specified",
+				interface_kind_names[decl.interface],
+			)
+		}
 	}
 
 	if decl.interface == .Uniform {
@@ -696,7 +704,7 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 		}
 	}
 
-	if !checker.reflection.enabled {
+	if .Enable_Reflection not_in checker.flags {
 		return
 	}
 	
@@ -1037,7 +1045,7 @@ resolve_constant :: proc(checker: ^Checker, e: ^Entity) {
 		}
 	}
 
-	if checker.reflection.enabled && d.shader_stage != nil {
+	if .Enable_Reflection not_in checker.flags && d.shader_stage != nil {
 		type    := type.variant.(^types.Proc)
 		inputs  := make([]Reflection_Info, len(type.args),    checker.allocator)
 		outputs := make([]Reflection_Info, len(type.returns), checker.allocator)
@@ -1098,18 +1106,16 @@ checker_init :: proc(
 	checker:       ^Checker,
 	defines:       map[string]types.Const_Value,
 	shared_types:  []Shared_Type,
-	reflection:    bool,
-	target_opengl: bool,
+	flags:         Flags,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) {
 	checker.allocator                         = allocator
 	checker.reflection.interface.allocator    = allocator
 	checker.reflection.entry_points.allocator = allocator
-	checker.reflection.enabled                = reflection
-	checker.target_opengl                     = target_opengl
 	checker.error_allocator                   = error_allocator
 	checker.errors                            = make([dynamic]tokenizer.Error, error_allocator)
+	checker.flags                             = flags
 
 	scope_push(checker, .Global)
 
@@ -1318,13 +1324,12 @@ check :: proc(
 	stmts:   []^ast.Stmt,
 	defines: map[string]types.Const_Value,
 	types:   []typeid,
-	reflection      := false, // when true, checker.reflection.infos will contain information about used interface variables
-	target_opengl   := false,
+	flags           := Flags{},
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (checker: Checker, errors: []tokenizer.Error) {
 	shared_types := shared_types_from_typeids(types, allocator)
-	checker_init(&checker, defines, shared_types, reflection, target_opengl, allocator, error_allocator)
+	checker_init(&checker, defines, shared_types, flags, allocator, error_allocator)
 	check_stmt_list(&checker, stmts)
 	return checker, checker.errors[:]
 }
