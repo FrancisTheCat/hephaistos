@@ -25,6 +25,7 @@ parse              :: parser.parse
 
 check              :: checker.check
 Checker            :: checker.Checker
+Checker_Flags      :: checker.Flags
 Buffer_Address     :: checker.Buffer_Address
 Reflection_Info    :: checker.Reflection_Info
 Entry_Point_Info   :: checker.Entry_Point_Info

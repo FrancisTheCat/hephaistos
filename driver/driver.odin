@@ -78,8 +78,8 @@ main :: proc() {
 	if options.output == "" {
 		options.output = "a.spv"
 	}
-	source, ok := os.read_entire_file(options.input, context.temp_allocator)
-	if !ok {
+	source, err := os.read_entire_file(options.input, context.temp_allocator)
+	if err != nil {
 		fmt.eprintln("Failed to open input file")
 		return
 	}
@@ -89,7 +89,7 @@ main :: proc() {
 		file_name := filepath.base(options.input)
 		lines     := strings.split_lines(string(source))
 		for error in errors {
-			hep.print_error(os.stream_from_handle(os.stdout), file_name, lines, error)
+			hep.print_error(os.to_stream(os.stdout), file_name, lines, error)
 		}
 	}
 
@@ -106,8 +106,18 @@ main :: proc() {
 		return
 	}
 
+	flags: hep.Checker_Flags
+	spirv_version: u32
+	switch options.target_env {
+	case .OpenGL:
+		spirv_version = hep.SPIR_V_VERSION_1_0
+		flags         = { .Auto_Map_Locations, .Auto_Bind_Uniforms, }
+	case .Vulkan:
+		spirv_version = hep.SPIR_V_VERSION_1_6
+	}
+
 	checker: hep.Checker
-	checker, errors = hep.check(stmts, options.defines, {}, context.temp_allocator)
+	checker, errors = hep.check(stmts, options.defines, {}, flags, context.temp_allocator)
 	if len(errors) != 0 {
 		return
 	}
@@ -116,17 +126,9 @@ main :: proc() {
 		return
 	}
 
-	spirv_version: u32
-	switch options.target_env {
-	case .OpenGL:
-		spirv_version = hep.SPIR_V_VERSION_1_0
-	case .Vulkan:
-		spirv_version = hep.SPIR_V_VERSION_1_6
-	}
-
 	code := hep.cg_generate(&checker, stmts, options.input, string(source), spirv_version)
-	ok = os.write_entire_file(options.output, slice.to_bytes(code))
-	if !ok {
+	err   = os.write_entire_file(options.output, slice.to_bytes(code))
+	if err != nil {
 		fmt.eprintln("Failed to write output file")
 	}
 }
